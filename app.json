@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "threads",
-    "slug": "threads",
+    "name": "Geo Threads",
+    "slug": "geo-threads",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "threads",
+    "scheme": "geo-threads",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
