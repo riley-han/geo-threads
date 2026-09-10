@@ -11,6 +11,7 @@ import { Pressable, useColorScheme, View, StyleSheet } from 'react-native';
 
 import { ExternalLink } from './external-link';
 import { GeoThreadsMark } from './geo-threads-mark';
+import { GlassPanel } from './glass-panel';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
@@ -22,8 +23,8 @@ export default function AppTabs() {
       <TabSlot style={{ height: '100%' }} />
       <TabList asChild>
         <CustomTabList>
-          <TabTrigger name="home" href="/home" asChild>
-            <TabButton>Home</TabButton>
+          <TabTrigger name="inbox" href="/inbox" asChild>
+            <TabButton>Inbox</TabButton>
           </TabTrigger>
           <TabTrigger name="explore" href="/explore" asChild>
             <TabButton>Explore</TabButton>
@@ -54,7 +55,7 @@ export function CustomTabList(props: TabListProps) {
 
   return (
     <View {...props} style={styles.tabListContainer}>
-      <ThemedView type="backgroundElement" style={styles.innerContainer}>
+      <GlassPanel variant="regular" style={styles.innerContainer}>
         <View style={styles.brand}>
           <GeoThreadsMark size={20} />
           <ThemedText type="smallBold">Geo Threads</ThemedText>
@@ -72,7 +73,7 @@ export function CustomTabList(props: TabListProps) {
             />
           </Pressable>
         </ExternalLink>
-      </ThemedView>
+      </GlassPanel>
     </View>
   );
 }

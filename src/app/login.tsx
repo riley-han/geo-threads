@@ -31,7 +31,7 @@ export default function LoginScreen() {
   const handleSubmit = () => {
     if (!canSubmit) return;
     console.log('sign-in', { username });
-    router.replace('/home');
+    router.replace('/inbox');
   };
 
   return (
