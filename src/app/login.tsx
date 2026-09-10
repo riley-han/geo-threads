@@ -26,12 +26,9 @@ export default function LoginScreen() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
 
-  const canSubmit = username.trim().length > 0 && password.length > 0;
-
-  const handleSubmit = () => {
-    if (!canSubmit) return;
-    console.log('sign-in', { username });
-    router.replace('/home');
+  const enterApp = (source: 'sign-in' | 'gmail' | 'sign-up') => {
+    console.log(source, source === 'sign-in' ? { username } : undefined);
+    router.replace('/inbox');
   };
 
   return (
@@ -75,7 +72,7 @@ export default function LoginScreen() {
                 textContentType="password"
                 secureTextEntry
                 returnKeyType="go"
-                onSubmitEditing={handleSubmit}
+                onSubmitEditing={() => enterApp('sign-in')}
                 style={[
                   styles.input,
                   { color: theme.text, backgroundColor: theme.backgroundSelected },
@@ -90,11 +87,10 @@ export default function LoginScreen() {
               </Pressable>
 
               <Pressable
-                onPress={handleSubmit}
-                disabled={!canSubmit}
+                onPress={() => enterApp('sign-in')}
                 style={({ pressed }) => [
                   styles.primaryButton,
-                  { opacity: !canSubmit ? 0.5 : pressed ? 0.85 : 1 },
+                  { opacity: pressed ? 0.85 : 1 },
                 ]}>
                 <ThemedText type="default" style={styles.primaryLabel}>
                   Sign in
@@ -111,7 +107,7 @@ export default function LoginScreen() {
             </View>
 
             <Pressable
-              onPress={() => console.log('gmail')}
+              onPress={() => enterApp('gmail')}
               style={({ pressed }) => [
                 styles.gmailButton,
                 {
@@ -128,7 +124,7 @@ export default function LoginScreen() {
               <ThemedText type="small" themeColor="textSecondary">
                 Don&apos;t have an account?{' '}
               </ThemedText>
-              <Pressable onPress={() => console.log('sign-up')} hitSlop={6}>
+              <Pressable onPress={() => enterApp('sign-up')} hitSlop={6}>
                 <ThemedText type="linkPrimary">Sign up</ThemedText>
               </Pressable>
             </View>
