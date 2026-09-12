@@ -51,6 +51,10 @@ export const Fonts = Platform.select({
   },
 });
 
+/** Brand accent. Used for links, primary buttons, fence UI and unread markers. */
+export const Accent = '#3c87f7';
+export const AccentFill = 'rgba(60,135,247,0.2)';
+
 export const Spacing = {
   half: 2,
   one: 4,
