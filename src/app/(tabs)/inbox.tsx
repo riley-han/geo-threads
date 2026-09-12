@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   FlatList,
@@ -10,158 +11,91 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { AvatarDot } from '@/components/avatar-dot';
 import { GlassPanel } from '@/components/glass-panel';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { BottomTabInset, Spacing } from '@/constants/theme';
+import { Accent, BottomTabInset, Spacing } from '@/constants/theme';
+import { ME_ID } from '@/data/contacts';
 import { useTheme } from '@/hooks/use-theme';
-
-type InboxThread = {
-  id: string;
-  name: string;
-  initials: string;
-  preview: string;
-  timestamp: string;
-  unread: boolean;
-};
-
-const AVATAR_COLORS = [
-  '#3c87f7',
-  '#e0668a',
-  '#f2a94b',
-  '#57c07f',
-  '#a373e6',
-  '#4bc0c0',
-  '#ef6f6c',
-  '#7a8b99',
-];
-
-const THREADS: InboxThread[] = [
-  {
-    id: '1',
-    name: 'Ada Okafor',
-    initials: 'AO',
-    preview: 'Sending over the map now — new pin dropped near the pier.',
-    timestamp: '9:41 AM',
-    unread: true,
-  },
-  {
-    id: '2',
-    name: 'Miguel Santos',
-    initials: 'MS',
-    preview: 'You: on my way, ETA 10',
-    timestamp: '9:12 AM',
-    unread: false,
-  },
-  {
-    id: '3',
-    name: 'Priya Balachandran',
-    initials: 'PB',
-    preview: 'Wait — is Overlook Point closed today?',
-    timestamp: '8:03 AM',
-    unread: true,
-  },
-  {
-    id: '4',
-    name: 'Jonas Weber',
-    initials: 'JW',
-    preview: 'Got the photos, thank you 🙏',
-    timestamp: 'Yesterday',
-    unread: false,
-  },
-  {
-    id: '5',
-    name: 'Naomi Reyes',
-    initials: 'NR',
-    preview: 'Let me know when you land in Osaka',
-    timestamp: 'Yesterday',
-    unread: false,
-  },
-  {
-    id: '6',
-    name: 'Fenwick Trail Crew',
-    initials: 'FT',
-    preview: 'New thread stitched together for the ridge loop.',
-    timestamp: 'Mon',
-    unread: true,
-  },
-  {
-    id: '7',
-    name: 'Chidera Umeh',
-    initials: 'CU',
-    preview: 'You: sounds good — send coords',
-    timestamp: 'Sun',
-    unread: false,
-  },
-  {
-    id: '8',
-    name: 'Elena Kováč',
-    initials: 'EK',
-    preview: 'Rain moved in, might have to move the meetup',
-    timestamp: 'Sun',
-    unread: false,
-  },
-  {
-    id: '9',
-    name: 'Theo Marchetti',
-    initials: 'TM',
-    preview: 'The waypoint you dropped works — thanks',
-    timestamp: 'Sat',
-    unread: false,
-  },
-  {
-    id: '10',
-    name: 'Amara Boateng',
-    initials: 'AB',
-    preview: 'Draft of the itinerary is in the shared thread.',
-    timestamp: 'Aug 24',
-    unread: false,
-  },
-  {
-    id: '11',
-    name: 'Ren Takahashi',
-    initials: 'RT',
-    preview: 'Camera roll synced. Let me know what to keep.',
-    timestamp: 'Aug 22',
-    unread: false,
-  },
-  {
-    id: '12',
-    name: 'Sana Iqbal',
-    initials: 'SI',
-    preview: 'Signal is spotty here — will reply properly tonight.',
-    timestamp: 'Aug 20',
-    unread: false,
-  },
-];
+import type { LatLng } from '@/lib/geo';
+import { useCurrentPosition } from '@/store/location-store';
+import { isMessageLocked, useConversations, type ConversationSummary } from '@/store/messages-store';
 
 const HEADER_HEIGHT = 140;
 const FAB_SIZE = 56;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const TIME_FORMAT = new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' });
+const WEEKDAY_FORMAT = new Intl.DateTimeFormat(undefined, { weekday: 'short' });
+const DATE_FORMAT = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' });
+
+function formatTimestamp(ts: number, now: Date): string {
+  const then = new Date(ts);
+  if (now.toDateString() === then.toDateString()) return TIME_FORMAT.format(then);
+
+  const daysAgo = Math.floor((now.getTime() - ts) / DAY_MS);
+  if (daysAgo <= 1) return 'Yesterday';
+  if (daysAgo < 7) return WEEKDAY_FORMAT.format(then);
+  return DATE_FORMAT.format(then);
+}
+
+function previewFor(conversation: ConversationSummary, position: LatLng): string {
+  const last = conversation.lastMessage;
+  if (!last) return 'No messages yet';
+  if (isMessageLocked(last, position)) return 'Locked message';
+  return `${last.senderId === ME_ID ? 'You: ' : ''}${last.body}`;
+}
 
 export default function InboxScreen() {
   const theme = useTheme();
+  const router = useRouter();
   const insets = useSafeAreaInsets();
+  const position = useCurrentPosition();
   const [query, setQuery] = useState('');
+  const conversations = useConversations();
 
+  const q = query.trim().toLowerCase();
+  const filtered = !q
+    ? conversations
+    : conversations.filter((c) => {
+        if (c.title.toLowerCase().includes(q)) return true;
+        // Locked bodies must not be searchable — matching one would leak it.
+        const last = c.lastMessage;
+        return last != null && !isMessageLocked(last, position) && last.body.toLowerCase().includes(q);
+      });
+
+  const now = new Date();
   const listTopInset = HEADER_HEIGHT + insets.top;
   const listBottomInset = BottomTabInset + Spacing.four + FAB_SIZE + Spacing.three;
 
-  const renderItem: ListRenderItem<InboxThread> = ({ item, index }) => (
-    <InboxRow thread={item} colorIndex={index} isLast={index === THREADS.length - 1} />
+  const renderItem: ListRenderItem<ConversationSummary> = ({ item, index }) => (
+    <InboxRow
+      conversation={item}
+      preview={previewFor(item, position)}
+      timestamp={item.lastMessage ? formatTimestamp(item.lastMessage.sentAt, now) : ''}
+      isLast={index === filtered.length - 1}
+      onPress={() => router.push({ pathname: '/conversation/[id]', params: { id: item.id } })}
+    />
   );
 
   return (
     <ThemedView style={styles.root}>
       <FlatList
-        data={THREADS}
-        keyExtractor={(t) => t.id}
+        data={filtered}
+        keyExtractor={(c) => c.id}
         renderItem={renderItem}
         contentContainerStyle={{
           paddingTop: listTopInset,
           paddingBottom: listBottomInset,
         }}
         scrollIndicatorInsets={{ top: listTopInset, bottom: BottomTabInset }}
-        showsVerticalScrollIndicator
+        keyboardShouldPersistTaps="handled"
+        ListEmptyComponent={
+          <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
+            No conversations match “{query}”
+          </ThemedText>
+        }
       />
 
       <GlassPanel variant="regular" style={[styles.header, { paddingTop: insets.top }]}>
@@ -175,11 +109,7 @@ export default function InboxScreen() {
             </ThemedText>
             <TextInput
               value={query}
-              onChangeText={(t) => {
-                setQuery(t);
-                console.log('search', t);
-              }}
-              onFocus={() => console.log('search-focus')}
+              onChangeText={setQuery}
               placeholder="Search"
               placeholderTextColor={theme.textSecondary}
               style={[styles.searchInput, { color: theme.text }]}
@@ -193,7 +123,7 @@ export default function InboxScreen() {
 
       <SafeAreaView edges={['bottom']} style={styles.fabWrap} pointerEvents="box-none">
         <Pressable
-          onPress={() => console.log('compose')}
+          onPress={() => router.push('/compose')}
           style={({ pressed }) => [styles.fabPress, pressed && styles.fabPressed]}
           hitSlop={8}>
           <GlassPanel variant="regular" interactive style={styles.fab}>
@@ -206,45 +136,52 @@ export default function InboxScreen() {
 }
 
 function InboxRow({
-  thread,
-  colorIndex,
+  conversation,
+  preview,
+  timestamp,
   isLast,
+  onPress,
 }: {
-  thread: InboxThread;
-  colorIndex: number;
+  conversation: ConversationSummary;
+  preview: string;
+  timestamp: string;
   isLast: boolean;
+  onPress: () => void;
 }) {
   const theme = useTheme();
-  const avatarColor = AVATAR_COLORS[colorIndex % AVATAR_COLORS.length];
+  const avatarSeed = conversation.participantIds[0] ?? conversation.id;
 
   return (
     <Pressable
-      onPress={() => console.log('open-thread', thread.id)}
+      onPress={onPress}
       style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.backgroundElement }]}>
       <View style={styles.unreadColumn}>
-        {thread.unread ? <View style={styles.unreadDot} /> : null}
+        {conversation.unread ? <View style={styles.unreadDot} /> : null}
       </View>
-      <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
-        <Text style={styles.avatarText}>{thread.initials}</Text>
+      <View style={styles.avatarSlot}>
+        <AvatarDot id={avatarSeed} name={conversation.title} size={44} />
       </View>
       <View style={styles.rowBody}>
         <View style={styles.rowTop}>
           <ThemedText
             type="default"
             numberOfLines={1}
-            style={[styles.name, thread.unread && styles.nameUnread]}>
-            {thread.name}
+            style={[styles.name, conversation.unread && styles.nameUnread]}>
+            {conversation.title}
           </ThemedText>
+          {conversation.lastMessage?.fence ? (
+            <ThemedText style={styles.rowPin}>📍</ThemedText>
+          ) : null}
           <ThemedText type="small" themeColor="textSecondary" style={styles.timestamp}>
-            {thread.timestamp}
+            {timestamp}
           </ThemedText>
         </View>
         <ThemedText
           type="small"
           themeColor="textSecondary"
           numberOfLines={1}
-          style={[styles.preview, thread.unread && styles.previewUnread]}>
-          {thread.preview}
+          style={[styles.preview, conversation.unread && styles.previewUnread]}>
+          {preview}
         </ThemedText>
         {!isLast ? (
           <View style={[styles.separator, { backgroundColor: theme.backgroundSelected }]} />
@@ -292,12 +229,19 @@ const styles = StyleSheet.create({
     fontSize: 15,
     paddingVertical: 0,
   },
+  empty: {
+    textAlign: 'center',
+    paddingTop: Spacing.four,
+  },
   row: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     paddingLeft: Spacing.two,
     paddingRight: Spacing.four,
     paddingVertical: Spacing.two + 2,
+  },
+  avatarSlot: {
+    marginRight: Spacing.three,
   },
   unreadColumn: {
     width: Spacing.three,
@@ -308,21 +252,7 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: '#3c87f7',
-  },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: Spacing.three,
-  },
-  avatarText: {
-    color: '#ffffff',
-    fontSize: 16,
-    fontWeight: '600',
-    letterSpacing: 0.5,
+    backgroundColor: Accent,
   },
   rowBody: {
     flex: 1,
@@ -339,6 +269,9 @@ const styles = StyleSheet.create({
   },
   nameUnread: {
     fontWeight: '700',
+  },
+  rowPin: {
+    fontSize: 11,
   },
   timestamp: {
     marginLeft: 'auto',
