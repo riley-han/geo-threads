@@ -49,9 +49,20 @@
       [
         "expo-location",
         {
-          "locationAlwaysAndWhenInUsePermission": "Geo Threads uses your location to unlock messages that were locked to a place."
+          "locationAlwaysAndWhenInUsePermission": "Geo Threads uses your location to unlock messages that were locked to a place.",
+          "locationWhenInUsePermission": "Geo Threads uses your location to unlock messages that were locked to a place.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
-      ]
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#3c87f7"
+        }
+      ],
+      "expo-sqlite"
     ],
     "experiments": {
       "typedRoutes": true,

@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -12,8 +12,12 @@ import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
 import { ME_ID, contactById } from '@/data/contacts';
 import type { Message } from '@/data/types';
+import { LocationPrimingSheet, type PrimingVariant } from '@/components/location-priming-sheet';
 import { useTheme } from '@/hooks/use-theme';
 import { isInsideFence, type Geofence } from '@/lib/geo';
+import { openSystemSettings } from '@/lib/location-permissions';
+import { messageVisibility } from '@/lib/message-visibility';
+import { requestNotificationAccess } from '@/lib/notifications';
 import { useLocation } from '@/store/location-store';
 import {
   conversationTitle,
@@ -41,11 +45,53 @@ export default function ConversationScreen() {
   const conversation = useConversation(id);
   const messages = useMessages(id);
   const { sendMessage, markRead } = useMessageActions();
-  const { position, jumpInside, jumpFarAway } = useLocation();
+  const {
+    position,
+    access,
+    requestForeground,
+    requestBackground,
+    simulated,
+    jumpInside,
+    jumpFarAway,
+    stopSimulating,
+  } = useLocation();
+  const [manualPriming, setManualPriming] = useState<PrimingVariant | null>(null);
+  const [autoDismissed, setAutoDismissed] = useState(false);
 
   useEffect(() => {
     if (conversation?.unread) markRead(id);
   }, [conversation?.unread, id, markRead]);
+
+  const hasLockedMessage = messages.some(
+    (m) => messageVisibility(m, position).kind === 'locked',
+  );
+
+  // Ask in context: only once this thread actually holds something locked.
+  const autoPriming: PrimingVariant | null =
+    autoDismissed || !hasLockedMessage
+      ? null
+      : access === 'none'
+        ? 'foreground'
+        : access === 'denied'
+          ? 'denied'
+          : null;
+  const priming = manualPriming ?? autoPriming;
+
+  const dismissPriming = () => {
+    setManualPriming(null);
+    setAutoDismissed(true);
+  };
+
+  const handleAllow = async () => {
+    const variant = priming;
+    dismissPriming();
+    if (variant === 'foreground') await requestForeground();
+    if (variant === 'denied') openSystemSettings();
+    if (variant === 'background') {
+      const granted = await requestNotificationAccess();
+      if (granted) await requestBackground();
+    }
+  };
 
   const participants = (conversation?.participantIds ?? [])
     .map(contactById)
@@ -55,7 +101,16 @@ export default function ConversationScreen() {
 
   /** The most recent fence in the thread — what the dev toggle jumps to. */
   const latestFence = latestFenceIn(messages);
-  const insideFence = latestFence ? isInsideFence(position, latestFence) : false;
+  const insideFence =
+    latestFence != null && position != null && isInsideFence(position, latestFence);
+
+  /** Dev-only: real GPS → inside the fence → far away → back to GPS. */
+  const cycleSimulation = () => {
+    if (!latestFence) return;
+    if (!simulated) jumpInside(latestFence);
+    else if (insideFence) jumpFarAway();
+    else stopSimulating();
+  };
 
   if (!conversation) {
     return (
@@ -87,6 +142,9 @@ export default function ConversationScreen() {
         isMine={isMine}
         isLastInRun={isLastInRun}
         showSender={showSender}
+        onRequestArrivalAlerts={
+          access === 'foreground' ? () => setManualPriming('background') : undefined
+        }
       />
     );
   };
@@ -127,11 +185,11 @@ export default function ConversationScreen() {
 
               {latestFence ? (
                 <Pressable
-                  onPress={() => (insideFence ? jumpFarAway() : jumpInside(latestFence))}
+                  onPress={() => cycleSimulation()}
                   hitSlop={8}
                   style={[styles.devPill, { backgroundColor: theme.backgroundSelected }]}>
                   <ThemedText type="small" themeColor="textSecondary" style={styles.devText}>
-                    {insideFence ? 'Inside' : 'Away'}
+                    {!simulated ? 'GPS' : insideFence ? 'Inside' : 'Away'}
                   </ThemedText>
                 </Pressable>
               ) : (
@@ -145,6 +203,13 @@ export default function ConversationScreen() {
           <MessageInputBar onSend={(body, fence) => sendMessage(id, body, fence)} />
         </SafeAreaView>
       </KeyboardAvoidingView>
+
+      <LocationPrimingSheet
+        visible={priming !== null}
+        variant={priming ?? 'foreground'}
+        onAllow={handleAllow}
+        onDismiss={dismissPriming}
+      />
     </ThemedView>
   );
 }

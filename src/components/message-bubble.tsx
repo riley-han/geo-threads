@@ -1,4 +1,4 @@
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { FenceBadge } from '@/components/fence-chip';
 import { GlassPanel } from '@/components/glass-panel';
@@ -7,23 +7,33 @@ import { Accent, Spacing } from '@/constants/theme';
 import { contactById } from '@/data/contacts';
 import type { Message } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
-import { distanceMeters, formatDistance, formatRadius } from '@/lib/geo';
+import { formatDistance, formatRadius } from '@/lib/geo';
+import { messageVisibility } from '@/lib/message-visibility';
 import { useCurrentPosition } from '@/store/location-store';
-import { isMessageLocked } from '@/store/messages-store';
+import { useMessageActions } from '@/store/messages-store';
 
 type Props = {
   message: Message;
   isMine: boolean;
   isLastInRun: boolean;
   showSender: boolean;
+  /** Offer the background/notification opt-in from a locked bubble. */
+  onRequestArrivalAlerts?: () => void;
 };
 
-export function MessageBubble({ message, isMine, isLastInRun, showSender }: Props) {
+export function MessageBubble({
+  message,
+  isMine,
+  isLastInRun,
+  showSender,
+  onRequestArrivalAlerts,
+}: Props) {
   const theme = useTheme();
   const position = useCurrentPosition();
+  const { unlockMessage } = useMessageActions();
 
   const fence = message.fence;
-  const locked = isMessageLocked(message, position);
+  const visibility = messageVisibility(message, position);
 
   const bubbleRadius = {
     borderTopLeftRadius: 18,
@@ -42,18 +52,45 @@ export function MessageBubble({ message, isMine, isLastInRun, showSender }: Prop
         </ThemedText>
       ) : null}
 
-      {locked && fence ? (
+      {visibility.kind === 'unlockable' ? (
+        <Pressable onPress={() => unlockMessage(message.id)}>
+          <GlassPanel
+            variant="regular"
+            interactive
+            style={[styles.bubble, styles.lockedBubble, bubbleRadius]}>
+            <View style={styles.lockHeader}>
+              <ThemedText style={styles.lockGlyph}>🔓</ThemedText>
+              <ThemedText type="smallBold">You&apos;re here</ThemedText>
+            </View>
+            <ThemedText type="small" themeColor="textSecondary" style={styles.lockHint}>
+              At {visibility.fence.label}
+            </ThemedText>
+            <ThemedText type="small" style={styles.lockDistance}>
+              Tap to unlock
+            </ThemedText>
+          </GlassPanel>
+        </Pressable>
+      ) : visibility.kind === 'locked' ? (
         <GlassPanel variant="regular" style={[styles.bubble, styles.lockedBubble, bubbleRadius]}>
           <View style={styles.lockHeader}>
             <ThemedText style={styles.lockGlyph}>🔒</ThemedText>
             <ThemedText type="smallBold">Locked message</ThemedText>
           </View>
           <ThemedText type="small" themeColor="textSecondary" style={styles.lockHint}>
-            Unlock within {formatRadius(fence.radiusMeters)} of {fence.label}
+            Unlock within {formatRadius(visibility.fence.radiusMeters)} of {visibility.fence.label}
           </ThemedText>
-          <ThemedText type="small" style={styles.lockDistance}>
-            {formatDistance(distanceMeters(position, fence))} away
-          </ThemedText>
+          {Number.isFinite(visibility.distanceMeters) ? (
+            <ThemedText type="small" style={styles.lockDistance}>
+              {formatDistance(visibility.distanceMeters)} away
+            </ThemedText>
+          ) : null}
+          {onRequestArrivalAlerts ? (
+            <Pressable onPress={onRequestArrivalAlerts} hitSlop={6} style={styles.alertsLink}>
+              <ThemedText type="small" style={styles.lockDistance}>
+                Notify me when I&apos;m nearby
+              </ThemedText>
+            </Pressable>
+          ) : null}
         </GlassPanel>
       ) : (
         <View
@@ -116,6 +153,9 @@ const styles = StyleSheet.create({
   lockDistance: {
     color: Accent,
     fontWeight: '600',
+  },
+  alertsLink: {
+    marginTop: Spacing.one,
   },
   body: {
     fontSize: 16,

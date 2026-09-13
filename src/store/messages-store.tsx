@@ -1,41 +1,19 @@
-import { createContext, useContext, useReducer, type ReactNode } from 'react';
+import { useSQLiteContext } from 'expo-sqlite';
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
 import { ME_ID, contactById } from '@/data/contacts';
-import { SEED_CONVERSATIONS, SEED_MESSAGES } from '@/data/seed-conversations';
 import type { Conversation, Message } from '@/data/types';
-import { isInsideFence, type Geofence, type LatLng } from '@/lib/geo';
-
-type State = {
-  conversations: Conversation[];
-  messages: Message[];
-};
-
-type Action =
-  | { type: 'send'; message: Message }
-  | { type: 'createConversation'; conversation: Conversation }
-  | { type: 'markRead'; conversationId: string };
-
-function reducer(state: State, action: Action): State {
-  switch (action.type) {
-    case 'send':
-      return { ...state, messages: [...state.messages, action.message] };
-    case 'createConversation':
-      return { ...state, conversations: [action.conversation, ...state.conversations] };
-    case 'markRead':
-      return {
-        ...state,
-        conversations: state.conversations.map((c) =>
-          c.id === action.conversationId && c.unread ? { ...c, unread: false } : c,
-        ),
-      };
-  }
-}
+import * as repo from '@/db/messages-repository';
+import type { Geofence } from '@/lib/geo';
 
 type MessagesApi = {
-  state: State;
+  conversations: Conversation[];
+  messages: Message[];
+  ready: boolean;
   sendMessage: (conversationId: string, body: string, fence?: Geofence) => void;
   createConversation: (participantIds: string[], title?: string) => string;
   markRead: (conversationId: string) => void;
+  unlockMessage: (messageId: string) => void;
 };
 
 const MessagesContext = createContext<MessagesApi | null>(null);
@@ -52,58 +30,81 @@ export function conversationTitle(conversation: Conversation): string {
   return conversation.participantIds.map((id) => contactById(id)?.name ?? id).join(', ');
 }
 
-/**
- * A fenced message is readable only from inside its fence. Every surface that
- * renders message text must ask this — bubbles, inbox previews, and search.
- */
-export function isMessageLocked(message: Message, position: LatLng): boolean {
-  return message.fence ? !isInsideFence(position, message.fence) : false;
-}
-
 export function MessagesProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, {
-    conversations: SEED_CONVERSATIONS,
-    messages: SEED_MESSAGES,
-  });
+  const db = useSQLiteContext();
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const [c, m] = await Promise.all([repo.loadConversations(db), repo.loadMessages(db)]);
+      if (cancelled) return;
+      setConversations(c);
+      setMessages(m);
+      setReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [db]);
 
   const sendMessage = (conversationId: string, body: string, fence?: Geofence) => {
-    dispatch({
-      type: 'send',
-      message: {
-        id: nextId('m'),
-        conversationId,
-        senderId: ME_ID,
-        body,
-        sentAt: Date.now(),
-        fence,
-      },
-    });
+    const message = {
+      id: nextId('m'),
+      conversationId,
+      senderId: ME_ID,
+      body,
+      sentAt: Date.now(),
+      fence,
+    };
+    setMessages((prev) => [...prev, { ...message, unlockedAt: null }]);
+    void repo.insertMessage(db, message);
   };
 
   const createConversation = (participantIds: string[], title?: string) => {
-    const existing = state.conversations.find((c) =>
-      sameParticipants(c.participantIds, participantIds),
-    );
+    const existing = conversations.find((c) => sameParticipants(c.participantIds, participantIds));
     if (existing) return existing.id;
 
-    const id = nextId('c');
-    dispatch({
-      type: 'createConversation',
-      conversation: {
-        id,
-        participantIds,
-        isGroup: participantIds.length > 1,
-        title,
-        unread: false,
-      },
-    });
-    return id;
+    const conversation: Conversation = {
+      id: nextId('c'),
+      participantIds,
+      isGroup: participantIds.length > 1,
+      title,
+      unread: false,
+    };
+    setConversations((prev) => [conversation, ...prev]);
+    void repo.insertConversation(db, conversation);
+    return conversation.id;
   };
 
-  const markRead = (conversationId: string) => dispatch({ type: 'markRead', conversationId });
+  const markRead = (conversationId: string) => {
+    setConversations((prev) =>
+      prev.map((c) => (c.id === conversationId && c.unread ? { ...c, unread: false } : c)),
+    );
+    void repo.markConversationRead(db, conversationId);
+  };
+
+  const unlockMessage = (messageId: string) => {
+    const at = Date.now();
+    setMessages((prev) =>
+      prev.map((m) => (m.id === messageId && m.unlockedAt == null ? { ...m, unlockedAt: at } : m)),
+    );
+    void repo.markMessageUnlocked(db, messageId, at);
+  };
 
   return (
-    <MessagesContext.Provider value={{ state, sendMessage, createConversation, markRead }}>
+    <MessagesContext.Provider
+      value={{
+        conversations,
+        messages,
+        ready,
+        sendMessage,
+        createConversation,
+        markRead,
+        unlockMessage,
+      }}>
       {children}
     </MessagesContext.Provider>
   );
@@ -122,33 +123,38 @@ export type ConversationSummary = Conversation & {
 
 /** Conversations ordered newest-activity first, each with its latest message attached. */
 export function useConversations(): ConversationSummary[] {
-  const { state } = useMessagesApi();
+  const { conversations, messages } = useMessagesApi();
 
   const latest = new Map<string, Message>();
-  for (const m of state.messages) {
+  for (const m of messages) {
     const current = latest.get(m.conversationId);
     if (!current || m.sentAt > current.sentAt) latest.set(m.conversationId, m);
   }
 
-  return state.conversations
+  return conversations
     .map((c) => ({ ...c, title: conversationTitle(c), lastMessage: latest.get(c.id) }))
     .sort((a, b) => (b.lastMessage?.sentAt ?? 0) - (a.lastMessage?.sentAt ?? 0));
 }
 
 export function useConversation(id: string): Conversation | undefined {
-  const { state } = useMessagesApi();
-  return state.conversations.find((c) => c.id === id);
+  return useMessagesApi().conversations.find((c) => c.id === id);
 }
 
 /** Messages for a conversation, oldest first. */
 export function useMessages(conversationId: string): Message[] {
-  const { state } = useMessagesApi();
-  return state.messages
-    .filter((m) => m.conversationId === conversationId)
+  return useMessagesApi()
+    .messages.filter((m) => m.conversationId === conversationId)
     .sort((a, b) => a.sentAt - b.sentAt);
 }
 
+/** Fenced messages the reader has not unlocked — the set worth monitoring. */
+export function usePendingFencedMessages(): Message[] {
+  return useMessagesApi().messages.filter(
+    (m) => m.fence != null && m.unlockedAt == null && m.senderId !== ME_ID,
+  );
+}
+
 export function useMessageActions() {
-  const { sendMessage, createConversation, markRead } = useMessagesApi();
-  return { sendMessage, createConversation, markRead };
+  const { sendMessage, createConversation, markRead, unlockMessage } = useMessagesApi();
+  return { sendMessage, createConversation, markRead, unlockMessage };
 }

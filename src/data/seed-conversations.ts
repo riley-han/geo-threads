@@ -2,6 +2,9 @@ import { ME_ID } from './contacts';
 import { PRESET_PLACES } from './places';
 import type { Conversation, Message } from './types';
 
+/** Seeds carry no unlock state — everything starts locked on a fresh install. */
+type SeedMessage = Omit<Message, 'unlockedAt'>;
+
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
@@ -35,7 +38,7 @@ export const SEED_CONVERSATIONS: Conversation[] = [
   { id: 'c-sana', participantIds: ['sana'], isGroup: false, unread: false },
 ];
 
-export const SEED_MESSAGES: Message[] = [
+export const SEED_MESSAGES: SeedMessage[] = [
   // Ada — includes a fence that CONTAINS the default position (renders unlocked).
   {
     id: 'm-ada-1',
