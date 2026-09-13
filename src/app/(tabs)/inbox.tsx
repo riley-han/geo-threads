@@ -20,7 +20,8 @@ import { ME_ID } from '@/data/contacts';
 import { useTheme } from '@/hooks/use-theme';
 import type { LatLng } from '@/lib/geo';
 import { useCurrentPosition } from '@/store/location-store';
-import { isMessageLocked, useConversations, type ConversationSummary } from '@/store/messages-store';
+import { messageVisibility } from '@/lib/message-visibility';
+import { useConversations, type ConversationSummary } from '@/store/messages-store';
 
 const HEADER_HEIGHT = 140;
 const FAB_SIZE = 56;
@@ -40,10 +41,10 @@ function formatTimestamp(ts: number, now: Date): string {
   return DATE_FORMAT.format(then);
 }
 
-function previewFor(conversation: ConversationSummary, position: LatLng): string {
+function previewFor(conversation: ConversationSummary, position: LatLng | null): string {
   const last = conversation.lastMessage;
   if (!last) return 'No messages yet';
-  if (isMessageLocked(last, position)) return 'Locked message';
+  if (messageVisibility(last, position).kind !== 'open') return 'Locked message';
   return `${last.senderId === ME_ID ? 'You: ' : ''}${last.body}`;
 }
 
@@ -62,7 +63,8 @@ export default function InboxScreen() {
         if (c.title.toLowerCase().includes(q)) return true;
         // Locked bodies must not be searchable — matching one would leak it.
         const last = c.lastMessage;
-        return last != null && !isMessageLocked(last, position) && last.body.toLowerCase().includes(q);
+        if (last == null || messageVisibility(last, position).kind !== 'open') return false;
+        return last.body.toLowerCase().includes(q);
       });
 
   const now = new Date();

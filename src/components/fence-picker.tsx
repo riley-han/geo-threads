@@ -9,6 +9,7 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Accent, Spacing } from '@/constants/theme';
 import {
+  DEFAULT_POSITION,
   DEFAULT_RADIUS_M,
   PRESET_PLACES,
   nearestPlaceName,
@@ -26,7 +27,8 @@ type Props = {
 
 export function FencePicker({ initialFence, onConfirm, onCancel }: Props) {
   const theme = useTheme();
-  const currentPosition = useCurrentPosition();
+  // Before a fix lands (or without permission) the picker still needs somewhere to start.
+  const currentPosition = useCurrentPosition() ?? DEFAULT_POSITION;
 
   const [center, setCenter] = useState<LatLng>(
     initialFence
