@@ -22,9 +22,13 @@ export function GeoThreadsMark({ size = 64, style }: Props) {
   );
 }
 
+/** The mark has its own colour — deliberately not the app's Accent token, which
+ *  still drives links, buttons and fence UI. */
+const MARK_RED = '#d93a2b';
+
 const styles = StyleSheet.create({
   tile: {
-    backgroundColor: '#3c87f7',
+    backgroundColor: MARK_RED,
     alignItems: 'center',
     justifyContent: 'center',
   },
