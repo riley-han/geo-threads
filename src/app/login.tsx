@@ -28,7 +28,7 @@ export default function LoginScreen() {
 
   const enterApp = (source: 'sign-in' | 'gmail' | 'sign-up') => {
     console.log(source, source === 'sign-in' ? { username } : undefined);
-    router.replace('/inbox');
+    router.replace('/home');
   };
 
   return (

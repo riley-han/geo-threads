@@ -8,9 +8,10 @@ import { ContactRow, RecipientField } from '@/components/recipient-field';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
-import { searchContacts, type Contact } from '@/data/contacts';
+import { searchWithin, type Contact } from '@/data/contacts';
 import { useTheme } from '@/hooks/use-theme';
 import { useMessageActions } from '@/store/messages-store';
+import { useFriendIds } from '@/store/social-store';
 import type { Geofence } from '@/lib/geo';
 
 export default function ComposeScreen() {
@@ -21,8 +22,13 @@ export default function ComposeScreen() {
   const [selected, setSelected] = useState<Contact[]>([]);
   const [query, setQuery] = useState('');
 
+  const friendIds = useFriendIds();
   const selectedIds = useMemo(() => selected.map((c) => c.id), [selected]);
-  const results = useMemo(() => searchContacts(query, selectedIds), [query, selectedIds]);
+  // Compose is friends-only; strangers are added from the people screen first.
+  const results = useMemo(
+    () => searchWithin(friendIds, query, selectedIds),
+    [friendIds, query, selectedIds],
+  );
 
   const isGroup = selected.length > 1;
   const showResults = query.length > 0 || selected.length === 0;
@@ -82,9 +88,16 @@ export default function ComposeScreen() {
                 <ContactRow contact={item} onPress={() => addContact(item)} />
               )}
               ListEmptyComponent={
-                <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
-                  No contacts match “{query}”
-                </ThemedText>
+                <View style={styles.emptyWrap}>
+                  <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
+                    {friendIds.length === 0
+                      ? 'You can only message friends. Add someone first.'
+                      : `No friends match “${query}”`}
+                  </ThemedText>
+                  <Pressable onPress={() => router.push('/people')} hitSlop={8}>
+                    <ThemedText type="linkPrimary">Find people</ThemedText>
+                  </Pressable>
+                </View>
               }
             />
           ) : (
@@ -135,9 +148,13 @@ const styles = StyleSheet.create({
   body: {
     flex: 1,
   },
+  emptyWrap: {
+    alignItems: 'center',
+    gap: Spacing.two,
+    paddingTop: Spacing.four,
+  },
   empty: {
     textAlign: 'center',
-    paddingTop: Spacing.four,
   },
   hintWrap: {
     flex: 1,

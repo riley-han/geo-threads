@@ -10,6 +10,7 @@ import { DATABASE_NAME, migrateDb } from '@/db/schema';
 import { GeofenceSync } from '@/store/geofence-sync';
 import { LocationProvider } from '@/store/location-store';
 import { MessagesProvider } from '@/store/messages-store';
+import { SocialProvider } from '@/store/social-store';
 
 // Side-effect import: the task must be registered at module scope, because the
 // OS can relaunch a terminated app straight into it.
@@ -29,7 +30,7 @@ function useNotificationRouting() {
     if (data?.conversationId) {
       router.push({ pathname: '/conversation/[id]', params: { id: data.conversationId } });
     } else if (lastResponse) {
-      router.push('/inbox');
+      router.push('/messages');
     }
   }, [lastResponse, router]);
 }
@@ -42,6 +43,8 @@ function RootNavigator() {
       <Stack.Screen name="login" />
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="compose" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="people" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="map" />
       <Stack.Screen name="conversation/[id]" />
     </Stack>
   );
@@ -56,10 +59,12 @@ export default function RootLayout() {
         <SQLiteProvider databaseName={DATABASE_NAME} onInit={migrateDb} useSuspense>
           <LocationProvider>
             <MessagesProvider>
-              <GeofenceSync>
-                <AnimatedSplashOverlay />
-                <RootNavigator />
-              </GeofenceSync>
+              <SocialProvider>
+                <GeofenceSync>
+                  <AnimatedSplashOverlay />
+                  <RootNavigator />
+                </GeofenceSync>
+              </SocialProvider>
             </MessagesProvider>
           </LocationProvider>
         </SQLiteProvider>

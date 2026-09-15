@@ -32,6 +32,16 @@ export const CONTACTS: Contact[] = [
   { id: 'luca', name: 'Luca Ferrari', handle: '@luca' },
   { id: 'imani', name: 'Imani Clarke', handle: '@imani' },
   { id: 'yusuf', name: 'Yusuf Demir', handle: '@yusuf' },
+  { id: 'marta', name: 'Marta Lindqvist', handle: '@marta' },
+  { id: 'devon', name: 'Devon Ellis', handle: '@devon' },
+  { id: 'hana', name: 'Hana Kobayashi', handle: '@hanak' },
+  { id: 'omar', name: 'Omar Haddad', handle: '@omar' },
+  { id: 'freya', name: 'Freya Nilsen', handle: '@freya' },
+  { id: 'kwame', name: 'Kwame Mensah', handle: '@kwame' },
+  { id: 'lucia', name: 'Lucia Moreno', handle: '@lucia' },
+  { id: 'arjun', name: 'Arjun Nair', handle: '@arjun' },
+  { id: 'nadia', name: 'Nadia Petrova', handle: '@nadia' },
+  { id: 'tobias', name: 'Tobias Brandt', handle: '@tobias' },
 ];
 
 const CONTACTS_BY_ID = new Map(CONTACTS.map((c) => [c.id, c]));
@@ -53,12 +63,29 @@ export function initialsFor(name: string): string {
   return parts.map((p) => p[0]?.toUpperCase() ?? '').join('');
 }
 
-export function searchContacts(query: string, excludeIds: string[] = []): Contact[] {
+function matches(contact: Contact, query: string): boolean {
+  if (!query) return true;
+  return (
+    contact.name.toLowerCase().includes(query) || contact.handle.toLowerCase().includes(query)
+  );
+}
+
+/** Everyone on the roster — backs people discovery, where strangers are the point. */
+export function searchAllContacts(query: string): Contact[] {
   const q = query.trim().toLowerCase();
+  return CONTACTS.filter((c) => matches(c, q));
+}
+
+/** Only the given ids — backs compose, which is restricted to accepted friends. */
+export function searchWithin(
+  ids: string[],
+  query: string,
+  excludeIds: string[] = [],
+): Contact[] {
+  const q = query.trim().toLowerCase();
+  const allowed = new Set(ids);
   const excluded = new Set(excludeIds);
-  return CONTACTS.filter((c) => {
-    if (excluded.has(c.id)) return false;
-    if (!q) return true;
-    return c.name.toLowerCase().includes(q) || c.handle.toLowerCase().includes(q);
-  });
+  return CONTACTS.filter(
+    (c) => allowed.has(c.id) && !excluded.has(c.id) && matches(c, q),
+  );
 }

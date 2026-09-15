@@ -4,7 +4,26 @@ import { SEED_CONVERSATIONS, SEED_MESSAGES } from '@/data/seed-conversations';
 
 export const DATABASE_NAME = 'geo-threads.db';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+
+/** Contacts who already appear in a seeded thread — they must be friends, or
+ *  existing conversations would violate the friends-only rule. */
+const SEED_FRIENDS = [
+  'ada',
+  'miguel',
+  'priya',
+  'jonas',
+  'naomi',
+  'chidera',
+  'elena',
+  'theo',
+  'amara',
+  'ren',
+  'sana',
+];
+
+/** Seeded so the accept/decline path is visible without a second device. */
+const SEED_INCOMING_REQUESTS = ['luca', 'imani'];
 
 /**
  * Runs on every open via SQLiteProvider's onInit. Seeds only on a fresh install —
@@ -70,6 +89,42 @@ export async function migrateDb(db: SQLite.SQLiteDatabase): Promise<void> {
             m.fence?.label ?? null,
             m.fence ? fenceKeyOf(m.fence) : null,
           ],
+        );
+      }
+    });
+  }
+
+  if (current < 2) {
+    await db.execAsync(`
+      CREATE TABLE friendships (
+        contact_id TEXT PRIMARY KEY NOT NULL,
+        status TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+
+      CREATE TABLE profile (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        name TEXT NOT NULL,
+        handle TEXT NOT NULL
+      );
+    `);
+
+    const now = Date.now();
+    await db.withTransactionAsync(async () => {
+      await db.runAsync('INSERT INTO profile (id, name, handle) VALUES (1, ?, ?)', [
+        'You',
+        '@you',
+      ]);
+      for (const id of SEED_FRIENDS) {
+        await db.runAsync(
+          'INSERT INTO friendships (contact_id, status, updated_at) VALUES (?, ?, ?)',
+          [id, 'accepted', now],
+        );
+      }
+      for (const id of SEED_INCOMING_REQUESTS) {
+        await db.runAsync(
+          'INSERT INTO friendships (contact_id, status, updated_at) VALUES (?, ?, ?)',
+          [id, 'pending_in', now],
         );
       }
     });
