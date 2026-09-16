@@ -22,9 +22,14 @@ export function GeoThreadsMark({ size = 64, style }: Props) {
   );
 }
 
+/** Utah Red, the University of Utah's primary brand colour (brand.utah.edu).
+ *  Deliberately not the app's Accent token, which still drives links,
+ *  buttons and fence UI. */
+const UTAH_RED = '#BE0000';
+
 const styles = StyleSheet.create({
   tile: {
-    backgroundColor: '#3c87f7',
+    backgroundColor: UTAH_RED,
     alignItems: 'center',
     justifyContent: 'center',
   },
