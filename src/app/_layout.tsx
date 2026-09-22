@@ -7,6 +7,7 @@ import { ActivityIndicator, useColorScheme, View } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { DATABASE_NAME, migrateDb } from '@/db/schema';
+import { AuthProvider, useAuth } from '@/store/auth-store';
 import { GeofenceSync } from '@/store/geofence-sync';
 import { LocationProvider } from '@/store/location-store';
 import { MessagesProvider } from '@/store/messages-store';
@@ -21,9 +22,14 @@ SplashScreen.preventAutoHideAsync();
 /** Routes a tapped arrival notification to the thread it refers to. */
 function useNotificationRouting() {
   const router = useRouter();
+  const { session } = useAuth();
   const lastResponse = Notifications.useLastNotificationResponse();
 
   useEffect(() => {
+    // Routing into a thread while signed out would be bounced by the guard
+    // below and lose the notification, so wait for the session to land.
+    if (!session) return;
+
     const data = lastResponse?.notification.request.content.data as
       | { conversationId?: string }
       | undefined;
@@ -32,20 +38,34 @@ function useNotificationRouting() {
     } else if (lastResponse) {
       router.push('/messages');
     }
-  }, [lastResponse, router]);
+  }, [lastResponse, router, session]);
 }
 
 function RootNavigator() {
+  const { session } = useAuth();
+  const isSignedIn = session != null;
+
   useNotificationRouting();
 
+  // Stack.Protected is declarative: a guarded screen cannot be navigated to at
+  // all, including via a deep link, so there is no redirect effect to race and
+  // no window where a signed-out deep link renders a thread before bouncing.
+  // `index` stays unguarded as the anchor the router falls back to.
   return (
-    <Stack initialRouteName="login" screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="login" />
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="compose" options={{ presentation: 'modal' }} />
-      <Stack.Screen name="people" options={{ presentation: 'modal' }} />
-      <Stack.Screen name="map" />
-      <Stack.Screen name="conversation/[id]" />
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="index" />
+
+      <Stack.Protected guard={!isSignedIn}>
+        <Stack.Screen name="login" />
+      </Stack.Protected>
+
+      <Stack.Protected guard={isSignedIn}>
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="compose" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="people" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="map" />
+        <Stack.Screen name="conversation/[id]" />
+      </Stack.Protected>
     </Stack>
   );
 }
@@ -57,16 +77,18 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Suspense fallback={<DatabaseFallback />}>
         <SQLiteProvider databaseName={DATABASE_NAME} onInit={migrateDb} useSuspense>
-          <LocationProvider>
-            <MessagesProvider>
-              <SocialProvider>
-                <GeofenceSync>
-                  <AnimatedSplashOverlay />
-                  <RootNavigator />
-                </GeofenceSync>
-              </SocialProvider>
-            </MessagesProvider>
-          </LocationProvider>
+          <AuthProvider>
+            <LocationProvider>
+              <MessagesProvider>
+                <SocialProvider>
+                  <GeofenceSync>
+                    <AnimatedSplashOverlay />
+                    <RootNavigator />
+                  </GeofenceSync>
+                </SocialProvider>
+              </MessagesProvider>
+            </LocationProvider>
+          </AuthProvider>
         </SQLiteProvider>
       </Suspense>
     </ThemeProvider>

@@ -1,6 +1,8 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -15,21 +17,111 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Colors, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { useAuth } from '@/store/auth-store';
 
 const ACCENT = '#3c87f7';
 const FORM_MAX_WIDTH = 360;
+
+type Mode = 'sign-in' | 'sign-up';
 
 export default function LoginScreen() {
   const router = useRouter();
   const theme = useTheme();
   const isDark = theme === Colors.dark;
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
+  const { signIn, signUp, sendPasswordReset } = useAuth();
 
-  const enterApp = (source: 'sign-in' | 'gmail' | 'sign-up') => {
-    console.log(source, source === 'sign-in' ? { username } : undefined);
-    router.replace('/home');
+  const [mode, setMode] = useState<Mode>('sign-in');
+  // Supabase password auth is keyed on email, so this is an email field rather
+  // than the username the mock screen collected.
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isSignUp = mode === 'sign-up';
+
+  const submit = async () => {
+    if (busy) return;
+    setError(null);
+
+    if (!email.trim() || !password) {
+      setError('Enter your email and password.');
+      return;
+    }
+    if (isSignUp && !name.trim()) {
+      setError('Enter your name.');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      if (isSignUp) {
+        const { error: signUpError, needsEmailConfirmation } = await signUp({
+          email,
+          password,
+          name,
+        });
+        if (signUpError) {
+          setError(signUpError);
+          return;
+        }
+        if (needsEmailConfirmation) {
+          Alert.alert(
+            'Confirm your email',
+            `We sent a confirmation link to ${email.trim()}. Open it to finish signing up.`,
+          );
+          setMode('sign-in');
+          setPassword('');
+          return;
+        }
+      } else {
+        const { error: signInError } = await signIn(email, password);
+        if (signInError) {
+          setError(signInError);
+          return;
+        }
+      }
+      // On success the session lands, the route guard opens the app screens,
+      // and this screen unmounts. Replacing explicitly keeps the transition
+      // immediate rather than waiting a frame for the guard.
+      router.replace('/home');
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const forgotPassword = async () => {
+    if (!email.trim()) {
+      setError('Enter your email first, then tap “Forgot password?”.');
+      return;
+    }
+    setError(null);
+    setBusy(true);
+    const { error: resetError } = await sendPasswordReset(email);
+    setBusy(false);
+
+    if (resetError) {
+      setError(resetError);
+      return;
+    }
+    Alert.alert('Check your email', `We sent a password reset link to ${email.trim()}.`);
+  };
+
+  const continueWithGoogle = () => {
+    // Google sign-in needs an OAuth provider configured in the Supabase
+    // dashboard plus a deep link back into the app. See supabase/README.md —
+    // until that is set up, say so rather than pretending to sign in.
+    Alert.alert(
+      'Not set up yet',
+      'Google sign-in needs an OAuth provider configured in Supabase. See supabase/README.md.',
+    );
+  };
+
+  const inputStyle = [
+    styles.input,
+    { color: theme.text, backgroundColor: theme.backgroundSelected },
+  ];
 
   return (
     <ThemedView style={styles.root}>
@@ -46,21 +138,36 @@ export default function LoginScreen() {
             </View>
 
             <ThemedView type="backgroundElement" style={styles.card}>
+              {isSignUp ? (
+                <TextInput
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="Name"
+                  placeholderTextColor={theme.textSecondary}
+                  autoCapitalize="words"
+                  autoComplete="name"
+                  textContentType="name"
+                  returnKeyType="next"
+                  editable={!busy}
+                  style={inputStyle}
+                />
+              ) : null}
+
               <TextInput
-                value={username}
-                onChangeText={setUsername}
-                placeholder="Username"
+                value={email}
+                onChangeText={setEmail}
+                placeholder="Email"
                 placeholderTextColor={theme.textSecondary}
                 autoCapitalize="none"
                 autoCorrect={false}
-                autoComplete="username"
-                textContentType="username"
+                autoComplete="email"
+                textContentType="emailAddress"
+                keyboardType="email-address"
                 returnKeyType="next"
-                style={[
-                  styles.input,
-                  { color: theme.text, backgroundColor: theme.backgroundSelected },
-                ]}
+                editable={!busy}
+                style={inputStyle}
               />
+
               <TextInput
                 value={password}
                 onChangeText={setPassword}
@@ -68,33 +175,41 @@ export default function LoginScreen() {
                 placeholderTextColor={theme.textSecondary}
                 autoCapitalize="none"
                 autoCorrect={false}
-                autoComplete="password"
-                textContentType="password"
+                autoComplete={isSignUp ? 'new-password' : 'password'}
+                textContentType={isSignUp ? 'newPassword' : 'password'}
                 secureTextEntry
                 returnKeyType="go"
-                onSubmitEditing={() => enterApp('sign-in')}
-                style={[
-                  styles.input,
-                  { color: theme.text, backgroundColor: theme.backgroundSelected },
-                ]}
+                onSubmitEditing={submit}
+                editable={!busy}
+                style={inputStyle}
               />
 
-              <Pressable
-                onPress={() => console.log('forgot-password')}
-                hitSlop={8}
-                style={styles.forgotWrap}>
-                <ThemedText type="linkPrimary">Forgot password?</ThemedText>
-              </Pressable>
+              {error ? (
+                <ThemedText type="small" style={styles.error}>
+                  {error}
+                </ThemedText>
+              ) : null}
+
+              {isSignUp ? null : (
+                <Pressable onPress={forgotPassword} disabled={busy} hitSlop={8} style={styles.forgotWrap}>
+                  <ThemedText type="linkPrimary">Forgot password?</ThemedText>
+                </Pressable>
+              )}
 
               <Pressable
-                onPress={() => enterApp('sign-in')}
+                onPress={submit}
+                disabled={busy}
                 style={({ pressed }) => [
                   styles.primaryButton,
-                  { opacity: pressed ? 0.85 : 1 },
+                  { opacity: pressed || busy ? 0.85 : 1 },
                 ]}>
-                <ThemedText type="default" style={styles.primaryLabel}>
-                  Sign in
-                </ThemedText>
+                {busy ? (
+                  <ActivityIndicator color="#ffffff" />
+                ) : (
+                  <ThemedText type="default" style={styles.primaryLabel}>
+                    {isSignUp ? 'Create account' : 'Sign in'}
+                  </ThemedText>
+                )}
               </Pressable>
             </ThemedView>
 
@@ -107,7 +222,8 @@ export default function LoginScreen() {
             </View>
 
             <Pressable
-              onPress={() => enterApp('gmail')}
+              onPress={continueWithGoogle}
+              disabled={busy}
               style={({ pressed }) => [
                 styles.gmailButton,
                 {
@@ -122,10 +238,16 @@ export default function LoginScreen() {
 
             <View style={styles.footer}>
               <ThemedText type="small" themeColor="textSecondary">
-                Don&apos;t have an account?{' '}
+                {isSignUp ? 'Already have an account? ' : "Don't have an account? "}
               </ThemedText>
-              <Pressable onPress={() => enterApp('sign-up')} hitSlop={6}>
-                <ThemedText type="linkPrimary">Sign up</ThemedText>
+              <Pressable
+                onPress={() => {
+                  setMode(isSignUp ? 'sign-in' : 'sign-up');
+                  setError(null);
+                }}
+                disabled={busy}
+                hitSlop={6}>
+                <ThemedText type="linkPrimary">{isSignUp ? 'Sign in' : 'Sign up'}</ThemedText>
               </Pressable>
             </View>
           </View>
@@ -183,6 +305,9 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two + 2,
     borderRadius: Spacing.two,
   },
+  error: {
+    color: '#ef6f6c',
+  },
   forgotWrap: {
     alignSelf: 'flex-end',
     marginTop: -Spacing.one,
@@ -193,6 +318,7 @@ const styles = StyleSheet.create({
     borderRadius: Spacing.two,
     alignItems: 'center',
     justifyContent: 'center',
+    minHeight: 44,
   },
   primaryLabel: {
     color: '#ffffff',
