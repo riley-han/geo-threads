@@ -1,6 +1,14 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { AvatarDot } from '@/components/avatar-dot';
@@ -12,6 +20,7 @@ import { ME_ID, type Contact } from '@/data/contacts';
 import { useTheme } from '@/hooks/use-theme';
 import { openSystemSettings } from '@/lib/location-permissions';
 import { requestNotificationAccess } from '@/lib/notifications';
+import { useAuth } from '@/store/auth-store';
 import { useLocation } from '@/store/location-store';
 import { useMessageActions } from '@/store/messages-store';
 import {
@@ -21,6 +30,11 @@ import {
   usePendingRequests,
   useSocialActions,
 } from '@/store/social-store';
+
+/** Matches the error red already used in login.tsx and address-search.tsx.
+ *  Declared here rather than in the StyleSheet because ActivityIndicator needs
+ *  the value as a prop. */
+const SIGN_OUT_RED = '#ef6f6c';
 
 const ACCESS_COPY = {
   none: { label: 'Not enabled', detail: 'Messages tied to a place stay locked.' },
@@ -40,8 +54,10 @@ export default function ProfileScreen() {
   const { updateProfile, acceptRequest, declineRequest, sendRequest } = useSocialActions();
   const { createConversation } = useMessageActions();
   const { access, requestForeground, requestBackground } = useLocation();
+  const { signOut } = useAuth();
 
   const [editing, setEditing] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
   const [draftName, setDraftName] = useState(profile.name);
   const [draftHandle, setDraftHandle] = useState(profile.handle);
 
@@ -70,6 +86,25 @@ export default function ProfileScreen() {
   };
 
   const accessCopy = ACCESS_COPY[access];
+
+  const confirmSignOut = () => {
+    Alert.alert('Sign out?', 'You will need to sign in again to see your threads.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Sign out', style: 'destructive', onPress: () => void runSignOut() },
+    ]);
+  };
+
+  const runSignOut = async () => {
+    setSigningOut(true);
+    const { error } = await signOut();
+    // On success the route guard unmounts this screen, so only the failure path
+    // has a component left to restore. Leaving the spinner up through the
+    // unmount frame is also the right transition.
+    if (error) {
+      setSigningOut(false);
+      Alert.alert('Could not sign out', error);
+    }
+  };
 
   return (
     <ThemedView style={styles.root}>
@@ -207,6 +242,25 @@ export default function ProfileScreen() {
             ))
           )}
         </View>
+
+        <Pressable
+          onPress={confirmSignOut}
+          disabled={signingOut}
+          style={({ pressed }) => [
+            styles.signOutButton,
+            {
+              backgroundColor: theme.backgroundElement,
+              opacity: pressed || signingOut ? 0.85 : 1,
+            },
+          ]}>
+          {signingOut ? (
+            <ActivityIndicator color={SIGN_OUT_RED} />
+          ) : (
+            <ThemedText type="default" style={styles.signOutLabel}>
+              Sign out
+            </ThemedText>
+          )}
+        </Pressable>
       </ScrollView>
     </ThemedView>
   );
@@ -271,6 +325,17 @@ const styles = StyleSheet.create({
   },
   cardButtonText: {
     color: '#ffffff',
+    fontWeight: '600',
+  },
+  signOutButton: {
+    paddingVertical: Spacing.three - 2,
+    borderRadius: Spacing.two,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
+  },
+  signOutLabel: {
+    color: SIGN_OUT_RED,
     fontWeight: '600',
   },
 });

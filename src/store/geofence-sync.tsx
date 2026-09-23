@@ -5,6 +5,7 @@ import { fenceKey } from '@/data/types';
 import type { Message } from '@/data/types';
 import { distanceMeters, type Geofence, type LatLng } from '@/lib/geo';
 import { GEOFENCE_TASK } from '@/lib/geofence-task';
+import { useAuth } from '@/store/auth-store';
 import { useLocation } from '@/store/location-store';
 import { usePendingFencedMessages } from '@/store/messages-store';
 
@@ -43,6 +44,9 @@ function regionsFor(messages: Message[], position: LatLng | null): Location.Loca
 export function GeofenceSync({ children }: { children: ReactNode }) {
   const { access, position } = useLocation();
   const pending = usePendingFencedMessages();
+  // A boolean, deliberately not the session object: its identity changes on
+  // every token auto-refresh, which would re-register the regions on a timer.
+  const signedIn = useAuth().session != null;
 
   const signature = regionsFor(pending, position)
     .map((r) => r.identifier)
@@ -54,7 +58,10 @@ export function GeofenceSync({ children }: { children: ReactNode }) {
     (async () => {
       const running = await Location.hasStartedGeofencingAsync(GEOFENCE_TASK).catch(() => false);
 
-      if (access !== 'background') {
+      // Signing out has to tear these down. Regions are registered with the OS,
+      // so they outlive the session and would keep firing arrival notifications
+      // for the previous user's fenced messages.
+      if (access !== 'background' || !signedIn) {
         if (running) await Location.stopGeofencingAsync(GEOFENCE_TASK).catch(() => {});
         return;
       }
@@ -75,7 +82,7 @@ export function GeofenceSync({ children }: { children: ReactNode }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [access, signature]);
+  }, [access, signature, signedIn]);
 
   return <>{children}</>;
 }
