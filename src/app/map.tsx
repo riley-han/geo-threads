@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { GlassPanel } from '@/components/glass-panel';
@@ -7,18 +7,18 @@ import { MapCanvas } from '@/components/map-canvas';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Accent, Spacing } from '@/constants/theme';
-import { contactById } from '@/data/contacts';
 import { DEFAULT_POSITION } from '@/data/places';
 import { useTheme } from '@/hooks/use-theme';
 import { distanceMeters, formatDistance } from '@/lib/geo';
 import { useCurrentPosition } from '@/store/location-store';
-import { usePendingFencedMessages } from '@/store/messages-store';
+import { useInboxState, usePendingFencedMessages } from '@/store/messages-store';
 
 export default function MapScreen() {
   const router = useRouter();
   const theme = useTheme();
   const position = useCurrentPosition();
   const pending = usePendingFencedMessages();
+  const { state: inboxState } = useInboxState();
 
   const origin = position ?? DEFAULT_POSITION;
 
@@ -61,9 +61,13 @@ export default function MapScreen() {
           <View style={styles.handle} />
           <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
             {pins.length === 0 ? (
-              <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
-                No locked messages anywhere yet.
-              </ThemedText>
+              inboxState === 'loading' || inboxState === 'idle' ? (
+                <ActivityIndicator style={styles.loading} />
+              ) : (
+                <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
+                  No locked messages anywhere yet.
+                </ThemedText>
+              )
             ) : (
               pins.map(({ message, fence, distance }) => (
                 <Pressable
@@ -77,7 +81,7 @@ export default function MapScreen() {
                   <ThemedText style={styles.rowGlyph}>🔒</ThemedText>
                   <View style={styles.rowBody}>
                     <ThemedText type="default" numberOfLines={1}>
-                      {contactById(message.senderId)?.name ?? 'Someone'}
+                      {message.sender.name}
                     </ThemedText>
                     <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
                       {fence.label}
@@ -163,6 +167,9 @@ const styles = StyleSheet.create({
   rowDistance: {
     color: Accent,
     fontWeight: '600',
+  },
+  loading: {
+    paddingTop: Spacing.four,
   },
   empty: {
     textAlign: 'center',

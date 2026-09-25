@@ -1,8 +1,7 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-import { contactById } from '@/data/contacts';
-import type { Message } from '@/data/types';
+import type { MirroredMessage } from '@/db/fence-mirror';
 
 export const ARRIVAL_CHANNEL = 'arrivals';
 
@@ -33,12 +32,19 @@ export async function requestNotificationAccess(): Promise<boolean> {
 /**
  * Composes the arrival alert for one place. Deliberately never includes message
  * text — the reader is in range, but a lock screen is not.
+ *
+ * Takes mirrored rows rather than Messages: this runs in a background task with
+ * no session and no store, so the sender's name has to have been denormalised
+ * into SQLite ahead of time. Nothing here can look anything up.
  */
-export async function notifyArrival(messages: Message[], placeLabel: string): Promise<void> {
+export async function notifyArrival(
+  messages: MirroredMessage[],
+  placeLabel: string,
+): Promise<void> {
   if (messages.length === 0) return;
 
   const single = messages.length === 1 ? messages[0] : undefined;
-  const senderName = single ? (contactById(single.senderId)?.name ?? 'Someone') : undefined;
+  const senderName = single ? single.senderName || 'Someone' : undefined;
 
   await Notifications.scheduleNotificationAsync({
     content: {

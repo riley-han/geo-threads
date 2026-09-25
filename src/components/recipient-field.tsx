@@ -3,11 +3,11 @@ import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 import { AvatarDot } from '@/components/avatar-dot';
 import { ThemedText } from '@/components/themed-text';
 import { Accent, Spacing } from '@/constants/theme';
-import type { Contact } from '@/data/contacts';
+import type { Person } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 
 type Props = {
-  selected: Contact[];
+  selected: Person[];
   query: string;
   onQueryChange: (next: string) => void;
   onRemove: (id: string) => void;
@@ -57,7 +57,7 @@ export function RecipientField({ selected, query, onQueryChange, onRemove }: Pro
   );
 }
 
-export function ContactRow({ contact, onPress }: { contact: Contact; onPress: () => void }) {
+export function ContactRow({ contact, onPress }: { contact: Person; onPress: () => void }) {
   const theme = useTheme();
   return (
     <Pressable

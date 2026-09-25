@@ -1,6 +1,14 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { GlassPanel } from '@/components/glass-panel';
@@ -10,7 +18,6 @@ import { MessageBubble } from '@/components/message-bubble';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
-import { ME_ID, contactById } from '@/data/contacts';
 import type { Message } from '@/data/types';
 import { LocationPrimingSheet, type PrimingVariant } from '@/components/location-priming-sheet';
 import { useTheme } from '@/hooks/use-theme';
@@ -42,8 +49,8 @@ export default function ConversationScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
 
-  const conversation = useConversation(id);
-  const messages = useMessages(id);
+  const { conversation, state: conversationState } = useConversation(id);
+  const { messages, state: messagesState, error: messagesError } = useMessages(id);
   const { sendMessage, markRead } = useMessageActions();
   const {
     position,
@@ -93,9 +100,7 @@ export default function ConversationScreen() {
     }
   };
 
-  const participants = (conversation?.participantIds ?? [])
-    .map(contactById)
-    .filter((c) => c !== undefined);
+  const participants = conversation?.participants ?? [];
 
   const title = conversation ? conversationTitle(conversation) : '';
 
@@ -116,25 +121,35 @@ export default function ConversationScreen() {
     return (
       <ThemedView style={styles.root}>
         <SafeAreaView style={styles.missing}>
-          <ThemedText type="default">Conversation not found.</ThemedText>
-          <Pressable onPress={() => router.back()} hitSlop={10}>
-            <ThemedText type="linkPrimary">Go back</ThemedText>
-          </Pressable>
+          {conversationState === 'loading' || conversationState === 'idle' ? (
+            <ActivityIndicator />
+          ) : (
+            <>
+              <ThemedText type="default">
+                {conversationState === 'error'
+                  ? 'Could not load this conversation.'
+                  : 'Conversation not found.'}
+              </ThemedText>
+              <Pressable onPress={() => router.back()} hitSlop={10}>
+                <ThemedText type="linkPrimary">Go back</ThemedText>
+              </Pressable>
+            </>
+          )}
         </SafeAreaView>
       </ThemedView>
     );
   }
 
   const renderItem = ({ item, index }: { item: Message; index: number }) => {
-    const isMine = item.senderId === ME_ID;
+    const isMine = item.isMine;
     const next = messages[index + 1];
     const prev = messages[index - 1];
 
     const isLastInRun =
-      !next || next.senderId !== item.senderId || next.sentAt - item.sentAt > RUN_GAP_MS;
+      !next || next.sender.id !== item.sender.id || next.sentAt - item.sentAt > RUN_GAP_MS;
     const showSender =
       conversation.isGroup &&
-      (!prev || prev.senderId !== item.senderId || item.sentAt - prev.sentAt > RUN_GAP_MS);
+      (!prev || prev.sender.id !== item.sender.id || item.sentAt - prev.sentAt > RUN_GAP_MS);
 
     return (
       <MessageBubble
@@ -163,6 +178,19 @@ export default function ConversationScreen() {
             paddingBottom: Spacing.three,
           }}
           keyboardDismissMode="interactive"
+          ListEmptyComponent={
+            messagesState === 'loading' || messagesState === 'idle' ? (
+              <ActivityIndicator style={styles.listEmpty} />
+            ) : messagesState === 'error' ? (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.listEmpty}>
+                {messagesError ?? 'Could not load these messages.'}
+              </ThemedText>
+            ) : (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.listEmpty}>
+                No messages yet. Say something.
+              </ThemedText>
+            )
+          }
         />
 
         <GlassPanel variant="regular" style={styles.header}>
@@ -200,7 +228,12 @@ export default function ConversationScreen() {
         </GlassPanel>
 
         <SafeAreaView edges={['bottom']}>
-          <MessageInputBar onSend={(body, fence) => sendMessage(id, body, fence)} />
+          <MessageInputBar
+            onSend={async (body, fence) => {
+              const { error } = await sendMessage(id, body, fence);
+              return error == null;
+            }}
+          />
         </SafeAreaView>
       </KeyboardAvoidingView>
 
@@ -220,6 +253,10 @@ const styles = StyleSheet.create({
   },
   flex: {
     flex: 1,
+  },
+  listEmpty: {
+    textAlign: 'center',
+    paddingTop: Spacing.six,
   },
   missing: {
     flex: 1,

@@ -1,6 +1,7 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
+  ActivityIndicator,
   FlatList,
   Pressable,
   StyleSheet,
@@ -16,12 +17,15 @@ import { GlassPanel } from '@/components/glass-panel';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Accent, BottomTabInset, Spacing } from '@/constants/theme';
-import { ME_ID } from '@/data/contacts';
 import { useTheme } from '@/hooks/use-theme';
 import type { LatLng } from '@/lib/geo';
 import { useCurrentPosition } from '@/store/location-store';
 import { messageVisibility } from '@/lib/message-visibility';
-import { useConversations, type ConversationSummary } from '@/store/messages-store';
+import {
+  useConversations,
+  useInboxState,
+  type ConversationSummary,
+} from '@/store/messages-store';
 
 const HEADER_HEIGHT = 140;
 const FAB_SIZE = 56;
@@ -45,7 +49,7 @@ function previewFor(conversation: ConversationSummary, position: LatLng | null):
   const last = conversation.lastMessage;
   if (!last) return 'No messages yet';
   if (messageVisibility(last, position).kind !== 'open') return 'Locked message';
-  return `${last.senderId === ME_ID ? 'You: ' : ''}${last.body}`;
+  return `${last.isMine ? 'You: ' : ''}${last.body}`;
 }
 
 export default function InboxScreen() {
@@ -55,6 +59,7 @@ export default function InboxScreen() {
   const position = useCurrentPosition();
   const [query, setQuery] = useState('');
   const conversations = useConversations();
+  const { state: inboxState, error: inboxError, refresh } = useInboxState();
 
   const q = query.trim().toLowerCase();
   const filtered = !q
@@ -94,9 +99,26 @@ export default function InboxScreen() {
         scrollIndicatorInsets={{ top: listTopInset, bottom: BottomTabInset }}
         keyboardShouldPersistTaps="handled"
         ListEmptyComponent={
-          <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
-            No conversations match “{query}”
-          </ThemedText>
+          inboxState === 'loading' || inboxState === 'idle' ? (
+            <ActivityIndicator style={styles.loading} />
+          ) : inboxState === 'error' ? (
+            <View style={styles.emptyWrap}>
+              <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
+                {inboxError ?? 'Could not load your conversations.'}
+              </ThemedText>
+              <Pressable onPress={() => void refresh()} hitSlop={8}>
+                <ThemedText type="linkPrimary">Try again</ThemedText>
+              </Pressable>
+            </View>
+          ) : q ? (
+            <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
+              No conversations match “{query}”
+            </ThemedText>
+          ) : (
+            <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
+              No conversations yet. Tap ✎ to start one.
+            </ThemedText>
+          )
         }
       />
 
@@ -151,7 +173,7 @@ function InboxRow({
   onPress: () => void;
 }) {
   const theme = useTheme();
-  const avatarSeed = conversation.participantIds[0] ?? conversation.id;
+  const avatarSeed = conversation.participants[0]?.id ?? conversation.id;
 
   return (
     <Pressable
@@ -230,6 +252,13 @@ const styles = StyleSheet.create({
     flex: 1,
     fontSize: 15,
     paddingVertical: 0,
+  },
+  loading: {
+    paddingTop: Spacing.four,
+  },
+  emptyWrap: {
+    alignItems: 'center',
+    gap: Spacing.one,
   },
   empty: {
     textAlign: 'center',

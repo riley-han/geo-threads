@@ -17,20 +17,44 @@ export type Person = {
 export type Message = {
   id: string;
   conversationId: string;
-  senderId: string;
+  /** The full profile, so nothing downstream has to resolve an id to a name. */
+  sender: Person;
+  /** Resolved once, in the mapper, from the signed-in user's id. */
+  isMine: boolean;
   body: string;
+  /** Epoch ms. The server stores timestamptz; the mapper is the only converter. */
   sentAt: number;
   fence?: Geofence;
-  /** Set once the reader unlocks it in range; a message stays readable afterwards. */
+  /**
+   * When *this viewer* unlocked it, epoch ms. Per-reader: two people in a group
+   * thread arrive at the same fenced message at different times, so this comes
+   * from `message_unlocks`, not from a column on the message.
+   */
   unlockedAt: number | null;
+  /** 'sending' until the insert lands, so an optimistic row is distinguishable. */
+  status: 'sent' | 'sending' | 'failed';
 };
 
 export type Conversation = {
   id: string;
-  participantIds: string[];
+  /**
+   * Everyone except you. The server's `conversation_participants` includes you;
+   * the mapper strips you out, so a 1:1 thread has exactly one participant and
+   * the title does not greet you by your own name.
+   */
+  participants: Person[];
+  /** From `conversations.is_group`, never from participants.length — after the
+   *  self-strip those disagree. */
   isGroup: boolean;
   title?: string;
+  /** Derived per viewer: a message you have not read arrived after last_read_at. */
   unread: boolean;
+  myLastReadAt: number | null;
+  /**
+   * The newest message, fetched with the conversation so the inbox can render a
+   * preview without loading every thread's history.
+   */
+  lastMessage?: Message;
 };
 
 /** Stable identity for a fence, so messages sharing a place share one monitored region. */
