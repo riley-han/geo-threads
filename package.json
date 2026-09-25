@@ -53,7 +53,8 @@
     "db:pull": "supabase db pull",
     "db:diff": "supabase db diff --schema public",
     "db:migrate": "supabase migration new",
-    "db:types": "supabase gen types typescript --linked --schema public > src/lib/database.types.ts.tmp && mv src/lib/database.types.ts.tmp src/lib/database.types.ts"
+    "db:types": "supabase gen types typescript --linked --schema public > src/lib/database.types.ts.tmp && mv src/lib/database.types.ts.tmp src/lib/database.types.ts",
+    "db:seed": "node --env-file=.env.local supabase/seed/seed.mjs"
   },
   "private": true
 }

@@ -69,8 +69,36 @@ disagree, regenerate rather than editing either one by hand.
 | `npm run db:diff`            | Shows the SQL difference against the linked project  |
 | `npm run db:migrate <name>`  | Creates a new timestamped migration file             |
 | `npm run db:types`           | Regenerates `src/lib/database.types.ts`              |
+| `npm run db:seed`            | Creates test accounts and threads in the linked project |
 
 Run `db:types` after every `db:push`, so the types and the schema never drift.
+
+## Seeding test data
+
+```bash
+npm run db:seed
+```
+
+Creates four confirmed accounts at `@geothreads.test` (password
+`threads-dev-1234`), two accepted friendships, one **pending** request so the
+accept/decline path is reachable on a single device, two threads, and one
+message fenced to the Ferry Building — which is also `DEFAULT_POSITION` in
+`src/data/places.ts`, so the conversation screen's jump pill unlocks it without
+leaving your desk.
+
+It needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in `.env.local`. The
+service role key **bypasses RLS entirely**: it must never carry an
+`EXPO_PUBLIC_` prefix and must never be imported from anything under `src/`.
+The script imports nothing from `src/` for that reason, and refuses to run if
+`SUPABASE_URL` does not match the project the CLI is linked to.
+
+Re-running is safe. Users are looked up by email before creation and every row
+it writes has a deterministic id, so a second run updates in place.
+
+It creates auth users through `auth.admin.createUser` rather than inserting
+into `auth.users`, so GoTrue hashes the passwords and the `on_auth_user_created`
+trigger builds the profile rows. That is also why it is a script and not a
+`seed.sql`.
 
 ## Testing RLS
 
@@ -169,6 +197,6 @@ That is why the policies on `conversations`, `conversation_participants` and
 - **Moving reads off SQLite.** `src/db/messages-repository.ts` still holds every
   SQL statement in the app, which is what makes this tractable: it is the one
   file a Postgres-backed repository has to replace.
-- **Seed data.** `src/data/contacts.ts` and `src/data/seed-conversations.ts` are
-  local fixtures with string ids (`'ada'`), not the UUIDs the server uses.
-  `supabase/seed.sql` is where the server-side equivalent would go.
+- **Moving the app onto this data.** `src/data/contacts.ts` and
+  `src/data/seed-conversations.ts` are still local fixtures with string ids
+  (`'ada'`), not the UUIDs the server uses, and the app still reads from SQLite.
