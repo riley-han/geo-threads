@@ -1,16 +1,23 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { FriendRow } from '@/components/friend-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
-import { searchAllContacts, type Contact } from '@/data/contacts';
+import { searchProfiles } from '@/data/repository';
+import type { Person } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { useMessageActions } from '@/store/messages-store';
-import { useFriendStatusMap, useSocialActions } from '@/store/social-store';
+import { useAuth } from '@/store/auth-store';
+import { useFriendStatusMap, usePendingRequests, useSocialActions } from '@/store/social-store';
+
+/** Long enough that a name has settled, short enough not to feel laggy. */
+const SEARCH_DEBOUNCE_MS = 250;
+/** Matches the repository's floor — below this it would match half the table. */
+const MIN_QUERY_LENGTH = 2;
 
 export default function PeopleScreen() {
   const router = useRouter();
@@ -18,28 +25,81 @@ export default function PeopleScreen() {
   const [query, setQuery] = useState('');
 
   const statuses = useFriendStatusMap();
+  const pendingRequests = usePendingRequests();
   const { sendRequest, acceptRequest, declineRequest } = useSocialActions();
   const { createConversation } = useMessageActions();
+  const { user } = useAuth();
+  const myId = user?.id ?? null;
 
-  const results = searchAllContacts(query);
-  // Incoming requests first — they need an answer, not to be scrolled past.
-  const incoming = results.filter((c) => statuses.get(c.id) === 'pending_in');
-  const others = results.filter((c) => statuses.get(c.id) !== 'pending_in');
+  const [opening, setOpening] = useState<string | null>(null);
 
-  const openConversation = (contact: Contact) => {
-    const id = createConversation([contact.id]);
+  const trimmed = query.trim();
+  const isSearching = trimmed.length >= MIN_QUERY_LENGTH;
+
+  /**
+   * The last completed search, tagged with the query it answered.
+   *
+   * Tagging means everything else is derived rather than stored: results are
+   * shown only when they answer the query on screen, which makes "still
+   * searching" a comparison rather than a flag, and makes a slow early response
+   * landing after a fast later one simply not match — no sequence counter, and
+   * no state to clear when the box is emptied.
+   */
+  const [answered, setAnswered] = useState<{
+    query: string;
+    people: Person[];
+    error: string | null;
+  }>({ query: '', people: [], error: null });
+
+  const isCurrent = answered.query === trimmed;
+  const results = isCurrent ? answered.people : [];
+  const searchError = isCurrent ? answered.error : null;
+  const searching = isSearching && !isCurrent;
+
+  // Finding a stranger is a query against profiles now, not a filter over a
+  // bundled array, so it is debounced.
+  useEffect(() => {
+    if (!myId || !isSearching) return;
+
+    const timer = setTimeout(() => {
+      void searchProfiles(trimmed, myId).then(({ people, error }) =>
+        setAnswered({ query: trimmed, people, error }),
+      );
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => clearTimeout(timer);
+  }, [trimmed, isSearching, myId]);
+
+  // Before there is a query, show the requests waiting on an answer — they are
+  // why most people open this screen.
+  const incoming = isSearching
+    ? results.filter((c) => statuses.get(c.id) === 'pending_in')
+    : pendingRequests;
+  const others = isSearching ? results.filter((c) => statuses.get(c.id) !== 'pending_in') : [];
+
+  const openConversation = async (person: Person) => {
+    if (opening) return;
+    setOpening(person.id);
+    const { id, error } = await createConversation([person.id]);
+    setOpening(null);
+
+    if (!id) {
+      Alert.alert('Could not open the conversation', error ?? 'Please try again.');
+      return;
+    }
     router.push({ pathname: '/conversation/[id]', params: { id } });
   };
 
-  const renderRow = (contact: Contact) => (
+  const renderRow = (person: Person) => (
     <FriendRow
-      key={contact.id}
-      contact={contact}
-      status={statuses.get(contact.id)}
-      onAdd={() => sendRequest(contact.id)}
-      onAccept={() => acceptRequest(contact.id)}
-      onDecline={() => declineRequest(contact.id)}
-      onMessage={() => openConversation(contact)}
+      key={person.id}
+      contact={person}
+      status={statuses.get(person.id)}
+      busy={opening === person.id}
+      onAdd={() => void sendRequest(person.id)}
+      onAccept={() => void acceptRequest(person.id)}
+      onDecline={() => void declineRequest(person.id)}
+      onMessage={() => void openConversation(person)}
     />
   );
 
@@ -96,9 +156,19 @@ export default function PeopleScreen() {
             </View>
           ) : null}
 
-          {results.length === 0 ? (
+          {searching ? (
+            <ActivityIndicator style={styles.loading} />
+          ) : searchError ? (
             <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
-              No one matches “{query.trim()}”.
+              Could not search right now.
+            </ThemedText>
+          ) : !isSearching && incoming.length === 0 ? (
+            <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
+              Search for someone by name or handle.
+            </ThemedText>
+          ) : isSearching && results.length === 0 ? (
+            <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
+              No one matches “{trimmed}”.
             </ThemedText>
           ) : null}
         </ScrollView>
@@ -152,6 +222,9 @@ const styles = StyleSheet.create({
   },
   section: {
     gap: Spacing.one,
+  },
+  loading: {
+    paddingTop: Spacing.four,
   },
   empty: {
     textAlign: 'center',

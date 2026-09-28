@@ -1,7 +1,7 @@
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { colorForId, initialsFor } from '@/data/contacts';
+import { colorForId, initialsFor } from '@/lib/avatar';
 
 type Props = {
   id: string;

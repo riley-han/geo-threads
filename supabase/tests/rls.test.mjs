@@ -179,6 +179,44 @@ await asUser(alice, () => denied("alice reading bob's unlock (per-reader privacy
 await asUser(bob, () => denied('bob forging an unlock for alice',
   () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`,[mid,alice])));
 
+console.log('\n\x1b[1m── queries the client depends on ──\x1b[0m');
+// The client reads its own unlock state through an embedded resource
+// (`unlocks:message_unlocks(...)`). That is only safe because the SELECT policy
+// scopes the table to the caller — if it were ever loosened to build a "seen by"
+// feature, unlockedAt would silently start reporting someone else's arrival.
+await asUser(alice, async () => {
+  const r = await db.query(
+    `select m.id, (select count(*)::int from public.message_unlocks u where u.message_id = m.id) as visible_unlocks
+     from public.messages m where m.id = $1`,
+    [mid],
+  );
+  r.rows[0].visible_unlocks === 0
+    ? ok("alice cannot see bob's unlock through an embed-style subquery")
+    : bad(`alice sees ${r.rows[0].visible_unlocks} unlock(s) that are not hers`);
+});
+await asUser(bob, async () => {
+  const r = await db.query(
+    `select (select count(*)::int from public.message_unlocks u where u.message_id = m.id) as visible_unlocks
+     from public.messages m where m.id = $1`,
+    [mid],
+  );
+  r.rows[0].visible_unlocks === 1
+    ? ok('bob sees exactly his own unlock')
+    : bad(`bob sees ${r.rows[0].visible_unlocks} unlocks, expected 1`);
+});
+
+// createConversation() in the repository relies on this: opening a chat with
+// the same person twice must reuse the thread rather than fork it.
+await asUser(alice, async () => {
+  const first = (await db.query(`select public.create_conversation(array[$1]::uuid[]) as id`, [bob]))
+    .rows[0].id;
+  const second = (await db.query(`select public.create_conversation(array[$1]::uuid[]) as id`, [bob]))
+    .rows[0].id;
+  first === second
+    ? ok('create_conversation returns the existing id for identical membership')
+    : bad(`create_conversation forked a thread: ${first} vs ${second}`);
+});
+
 console.log('\n\x1b[1m── constraints ──\x1b[0m');
 await asUser(alice, async () => {
   await denied('half-populated geofence (lat, no radius)',

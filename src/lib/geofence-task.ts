@@ -1,7 +1,7 @@
 import { LocationGeofencingEventType, type LocationRegion } from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 
-import { loadPendingMessagesForFence } from '@/db/messages-repository';
+import { loadMirroredForFence } from '@/db/fence-mirror';
 import { openDatabase } from '@/db/schema';
 import { notifyArrival } from '@/lib/notifications';
 
@@ -26,9 +26,10 @@ TaskManager.defineTask<GeofenceEvent>(GEOFENCE_TASK, async ({ data, error }) => 
 
   try {
     const db = await openDatabase();
-    const pending = await loadPendingMessagesForFence(db, key);
+    // The mirror, not the server: there is no session in a background task.
+    const pending = await loadMirroredForFence(db, key);
     if (pending.length === 0) return;
-    await notifyArrival(pending, pending[0].fence?.label ?? 'this place');
+    await notifyArrival(pending, pending[0].fenceLabel || 'this place');
   } catch {
     // A failed alert must never crash a background task.
   }

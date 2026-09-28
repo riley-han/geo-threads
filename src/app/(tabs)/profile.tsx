@@ -16,7 +16,7 @@ import { FriendRow } from '@/components/friend-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Accent, BottomTabInset, Spacing } from '@/constants/theme';
-import { ME_ID, type Contact } from '@/data/contacts';
+import type { Person } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { openSystemSettings } from '@/lib/location-permissions';
 import { requestNotificationAccess } from '@/lib/notifications';
@@ -26,9 +26,9 @@ import { useMessageActions } from '@/store/messages-store';
 import {
   useFriendStatusMap,
   useFriends,
-  useMyProfile,
   usePendingRequests,
   useSocialActions,
+  useSocialState,
 } from '@/store/social-store';
 
 /** Matches the error red already used in login.tsx and address-search.tsx.
@@ -47,31 +47,57 @@ export default function ProfileScreen() {
   const router = useRouter();
   const theme = useTheme();
 
-  const profile = useMyProfile();
+  const { signOut, profile, updateProfile, refreshProfile } = useAuth();
   const friends = useFriends();
   const requests = usePendingRequests();
   const statuses = useFriendStatusMap();
-  const { updateProfile, acceptRequest, declineRequest, sendRequest } = useSocialActions();
+  const { acceptRequest, declineRequest, sendRequest } = useSocialActions();
   const { createConversation } = useMessageActions();
   const { access, requestForeground, requestBackground } = useLocation();
-  const { signOut } = useAuth();
+  const { state: socialState } = useSocialState();
 
   const [editing, setEditing] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
-  const [draftName, setDraftName] = useState(profile.name);
-  const [draftHandle, setDraftHandle] = useState(profile.handle);
+  const [draftName, setDraftName] = useState('');
+  const [draftHandle, setDraftHandle] = useState('');
+  const [saving, setSaving] = useState(false);
 
   const beginEdit = () => {
-    setDraftName(profile.name);
-    setDraftHandle(profile.handle);
+    setDraftName(profile?.name ?? '');
+    setDraftHandle(profile?.handle ?? '');
     setEditing(true);
   };
 
-  const saveEdit = () => {
-    updateProfile({
-      name: draftName.trim() || 'You',
-      handle: draftHandle.trim() || '@you',
-    });
+  const saveEdit = async () => {
+    if (!profile || saving) return;
+
+    const name = draftName.trim();
+    // The column is lowercase and bare, checked against ^[a-z0-9_]{3,30}$.
+    // Normalising here means a typed '@' or a capital is fixed rather than
+    // rejected by the server with a check-constraint message.
+    const handle = draftHandle.trim().replace(/^@+/, '').toLowerCase();
+
+    if (!name) {
+      Alert.alert('Enter a name');
+      return;
+    }
+    if (!/^[a-z0-9_]{3,30}$/.test(handle)) {
+      Alert.alert(
+        'That handle will not work',
+        'Use 3 to 30 letters, numbers or underscores.',
+      );
+      return;
+    }
+
+    setSaving(true);
+    const { error } = await updateProfile({ name, handle });
+    setSaving(false);
+
+    if (error) {
+      Alert.alert('Could not save', error);
+      return;
+    }
+    await refreshProfile();
     setEditing(false);
   };
 
@@ -80,8 +106,18 @@ export default function ProfileScreen() {
     if (granted) await requestBackground();
   };
 
-  const openConversation = (contact: Contact) => {
-    const id = createConversation([contact.id]);
+  const [opening, setOpening] = useState<string | null>(null);
+
+  const openConversation = async (person: Person) => {
+    if (opening) return;
+    setOpening(person.id);
+    const { id, error } = await createConversation([person.id]);
+    setOpening(null);
+
+    if (!id) {
+      Alert.alert('Could not open the conversation', error ?? 'Please try again.');
+      return;
+    }
     router.push({ pathname: '/conversation/[id]', params: { id } });
   };
 
@@ -111,7 +147,11 @@ export default function ProfileScreen() {
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <SafeAreaView edges={['top']}>
           <View style={styles.account}>
-            <AvatarDot id={ME_ID} name={profile.name} size={72} />
+            {profile == null ? (
+              <ActivityIndicator style={styles.accountLoading} />
+            ) : (
+              <>
+            <AvatarDot id={profile.id} name={profile.name} size={72} />
             {editing ? (
               <View style={styles.editFields}>
                 <TextInput
@@ -142,9 +182,9 @@ export default function ProfileScreen() {
                       Cancel
                     </ThemedText>
                   </Pressable>
-                  <Pressable onPress={saveEdit} hitSlop={8}>
+                  <Pressable onPress={() => void saveEdit()} disabled={saving} hitSlop={8}>
                     <ThemedText type="linkPrimary" style={styles.save}>
-                      Save
+                      {saving ? 'Saving…' : 'Save'}
                     </ThemedText>
                   </Pressable>
                 </View>
@@ -155,11 +195,13 @@ export default function ProfileScreen() {
                   {profile.name}
                 </ThemedText>
                 <ThemedText type="small" themeColor="textSecondary">
-                  {profile.handle}
+                  @{profile.handle}
                 </ThemedText>
                 <Pressable onPress={beginEdit} hitSlop={8}>
                   <ThemedText type="linkPrimary">Edit profile</ThemedText>
                 </Pressable>
+              </>
+            )}
               </>
             )}
           </View>
@@ -207,10 +249,11 @@ export default function ProfileScreen() {
                 key={c.id}
                 contact={c}
                 status={statuses.get(c.id)}
-                onAdd={() => sendRequest(c.id)}
-                onAccept={() => acceptRequest(c.id)}
-                onDecline={() => declineRequest(c.id)}
-                onMessage={() => openConversation(c)}
+                onAdd={() => void sendRequest(c.id)}
+                onAccept={() => void acceptRequest(c.id)}
+                onDecline={() => void declineRequest(c.id)}
+                onMessage={() => void openConversation(c)}
+                busy={opening === c.id}
               />
             ))}
           </View>
@@ -225,19 +268,24 @@ export default function ProfileScreen() {
           </View>
 
           {friends.length === 0 ? (
-            <ThemedText type="small" themeColor="textSecondary">
-              No friends yet. You can only message people you have added.
-            </ThemedText>
+            socialState === 'loading' || socialState === 'idle' ? (
+              <ActivityIndicator style={styles.sectionLoading} />
+            ) : (
+              <ThemedText type="small" themeColor="textSecondary">
+                No friends yet. You can only message people you have added.
+              </ThemedText>
+            )
           ) : (
             friends.map((c) => (
               <FriendRow
                 key={c.id}
                 contact={c}
                 status={statuses.get(c.id)}
-                onAdd={() => sendRequest(c.id)}
-                onAccept={() => acceptRequest(c.id)}
-                onDecline={() => declineRequest(c.id)}
-                onMessage={() => openConversation(c)}
+                onAdd={() => void sendRequest(c.id)}
+                onAccept={() => void acceptRequest(c.id)}
+                onDecline={() => void declineRequest(c.id)}
+                onMessage={() => void openConversation(c)}
+                busy={opening === c.id}
               />
             ))
           )}
@@ -274,6 +322,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingBottom: BottomTabInset + Spacing.six,
     gap: Spacing.four,
+  },
+  sectionLoading: {
+    alignSelf: 'flex-start',
+  },
+  accountLoading: {
+    paddingVertical: Spacing.five,
   },
   account: {
     alignItems: 'center',

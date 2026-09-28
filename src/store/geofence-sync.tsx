@@ -7,7 +7,7 @@ import { distanceMeters, type Geofence, type LatLng } from '@/lib/geo';
 import { GEOFENCE_TASK } from '@/lib/geofence-task';
 import { useAuth } from '@/store/auth-store';
 import { useLocation } from '@/store/location-store';
-import { usePendingFencedMessages } from '@/store/messages-store';
+import { useInboxState, usePendingFencedMessages } from '@/store/messages-store';
 
 /** iOS monitors at most 20 regions per app; Android allows 100. Stay under both. */
 const MAX_REGIONS = 20;
@@ -47,6 +47,11 @@ export function GeofenceSync({ children }: { children: ReactNode }) {
   // A boolean, deliberately not the session object: its identity changes on
   // every token auto-refresh, which would re-register the regions on a timer.
   const signedIn = useAuth().session != null;
+  // Not just "signed in": pendingFenced is empty while the first fetch is in
+  // flight, so acting before it resolves would stop geofencing on every cold
+  // start and re-register a moment later — churn, and a window where an
+  // arrival goes unnoticed.
+  const loaded = useInboxState().state === 'ready';
 
   const signature = regionsFor(pending, position)
     .map((r) => r.identifier)
@@ -61,7 +66,7 @@ export function GeofenceSync({ children }: { children: ReactNode }) {
       // Signing out has to tear these down. Regions are registered with the OS,
       // so they outlive the session and would keep firing arrival notifications
       // for the previous user's fenced messages.
-      if (access !== 'background' || !signedIn) {
+      if (access !== 'background' || !signedIn || !loaded) {
         if (running) await Location.stopGeofencingAsync(GEOFENCE_TASK).catch(() => {});
         return;
       }
@@ -82,7 +87,7 @@ export function GeofenceSync({ children }: { children: ReactNode }) {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [access, signature, signedIn]);
+  }, [access, signature, signedIn, loaded]);
 
   return <>{children}</>;
 }

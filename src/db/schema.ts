@@ -1,144 +1,62 @@
 import * as SQLite from 'expo-sqlite';
 
-import { SEED_CONVERSATIONS, SEED_MESSAGES } from '@/data/seed-conversations';
-
 export const DATABASE_NAME = 'geo-threads.db';
 
-const SCHEMA_VERSION = 2;
-
-/** Contacts who already appear in a seeded thread — they must be friends, or
- *  existing conversations would violate the friends-only rule. */
-const SEED_FRIENDS = [
-  'ada',
-  'miguel',
-  'priya',
-  'jonas',
-  'naomi',
-  'chidera',
-  'elena',
-  'theo',
-  'amara',
-  'ren',
-  'sana',
-];
-
-/** Seeded so the accept/decline path is visible without a second device. */
-const SEED_INCOMING_REQUESTS = ['luca', 'imani'];
+const SCHEMA_VERSION = 3;
 
 /**
- * Runs on every open via SQLiteProvider's onInit. Seeds only on a fresh install —
- * once user_version is stamped, seed data is never re-applied over real messages.
+ * Runs on every open via SQLiteProvider's onInit.
+ *
+ * Since v3 this database holds no application data. Conversations, messages,
+ * friendships and profiles all live in Postgres, scoped to the signed-in user
+ * by row level security. What remains is a mirror of the fenced messages still
+ * awaiting arrival, because the background geofencing task has no session and
+ * cannot query the server — see src/db/fence-mirror.ts.
  */
 export async function migrateDb(db: SQLite.SQLiteDatabase): Promise<void> {
   const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
   const current = row?.user_version ?? 0;
   if (current >= SCHEMA_VERSION) return;
 
-  if (current === 0) {
-    await db.execAsync(`
-      PRAGMA journal_mode = WAL;
+  await db.execAsync(`
+    PRAGMA journal_mode = WAL;
 
-      CREATE TABLE conversations (
-        id TEXT PRIMARY KEY NOT NULL,
-        participant_ids TEXT NOT NULL,
-        is_group INTEGER NOT NULL,
-        title TEXT,
-        unread INTEGER NOT NULL
-      );
+    -- Dropped rather than left in place. The server owns this data now, and
+    -- tables that still exist invite someone to read from them.
+    DROP TABLE IF EXISTS messages;
+    DROP TABLE IF EXISTS conversations;
+    DROP TABLE IF EXISTS friendships;
+    DROP TABLE IF EXISTS profile;
 
-      CREATE TABLE messages (
-        id TEXT PRIMARY KEY NOT NULL,
-        conversation_id TEXT NOT NULL,
-        sender_id TEXT NOT NULL,
-        body TEXT NOT NULL,
-        sent_at INTEGER NOT NULL,
-        fence_latitude REAL,
-        fence_longitude REAL,
-        fence_radius REAL,
-        fence_label TEXT,
-        fence_key TEXT,
-        unlocked_at INTEGER
-      );
+    CREATE TABLE IF NOT EXISTS pending_fenced (
+      message_id      TEXT PRIMARY KEY NOT NULL,
+      conversation_id TEXT NOT NULL,
+      sender_name     TEXT NOT NULL,
+      fence_key       TEXT NOT NULL,
+      fence_label     TEXT NOT NULL,
+      sent_at         TEXT NOT NULL
+    );
 
-      CREATE INDEX idx_messages_conversation ON messages (conversation_id, sent_at);
-      CREATE INDEX idx_messages_fence_key ON messages (fence_key);
-    `);
+    CREATE INDEX IF NOT EXISTS idx_pending_fenced_key ON pending_fenced (fence_key);
 
-    await db.withTransactionAsync(async () => {
-      for (const c of SEED_CONVERSATIONS) {
-        await db.runAsync(
-          'INSERT INTO conversations (id, participant_ids, is_group, title, unread) VALUES (?, ?, ?, ?, ?)',
-          [c.id, JSON.stringify(c.participantIds), c.isGroup ? 1 : 0, c.title ?? null, c.unread ? 1 : 0],
-        );
-      }
-      for (const m of SEED_MESSAGES) {
-        await db.runAsync(
-          `INSERT INTO messages
-             (id, conversation_id, sender_id, body, sent_at,
-              fence_latitude, fence_longitude, fence_radius, fence_label, fence_key, unlocked_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
-          [
-            m.id,
-            m.conversationId,
-            m.senderId,
-            m.body,
-            m.sentAt,
-            m.fence?.latitude ?? null,
-            m.fence?.longitude ?? null,
-            m.fence?.radiusMeters ?? null,
-            m.fence?.label ?? null,
-            m.fence ? fenceKeyOf(m.fence) : null,
-          ],
-        );
-      }
-    });
-  }
+    CREATE TABLE IF NOT EXISTS mirror_meta (
+      id       INTEGER PRIMARY KEY CHECK (id = 1),
+      owner_id TEXT
+    );
+  `);
 
-  if (current < 2) {
-    await db.execAsync(`
-      CREATE TABLE friendships (
-        contact_id TEXT PRIMARY KEY NOT NULL,
-        status TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-
-      CREATE TABLE profile (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        name TEXT NOT NULL,
-        handle TEXT NOT NULL
-      );
-    `);
-
-    const now = Date.now();
-    await db.withTransactionAsync(async () => {
-      await db.runAsync('INSERT INTO profile (id, name, handle) VALUES (1, ?, ?)', [
-        'You',
-        '@you',
-      ]);
-      for (const id of SEED_FRIENDS) {
-        await db.runAsync(
-          'INSERT INTO friendships (contact_id, status, updated_at) VALUES (?, ?, ?)',
-          [id, 'accepted', now],
-        );
-      }
-      for (const id of SEED_INCOMING_REQUESTS) {
-        await db.runAsync(
-          'INSERT INTO friendships (contact_id, status, updated_at) VALUES (?, ?, ?)',
-          [id, 'pending_in', now],
-        );
-      }
-    });
-  }
-
+  await db.runAsync('INSERT OR IGNORE INTO mirror_meta (id, owner_id) VALUES (1, NULL)');
   await db.execAsync(`PRAGMA user_version = ${SCHEMA_VERSION}`);
 }
 
-// Local copy to keep schema.ts free of a cycle through data/types.
-function fenceKeyOf(fence: { latitude: number; longitude: number; radiusMeters: number }): string {
-  return `${fence.latitude.toFixed(5)}:${fence.longitude.toFixed(5)}:${Math.round(fence.radiusMeters)}`;
-}
-
-/** Opens the database outside React — used by the background geofencing task. */
+/**
+ * Opens the database outside React — used by the background geofencing task.
+ *
+ * Deliberately does not run migrateDb. On a first-ever launch straight into the
+ * task the mirror may not exist yet; the task's own catch swallows that and
+ * skips one notification, which is a better trade than running a migration
+ * from a headless context with a few seconds of OS budget.
+ */
 export async function openDatabase(): Promise<SQLite.SQLiteDatabase> {
   return SQLite.openDatabaseAsync(DATABASE_NAME);
 }

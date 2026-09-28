@@ -1,22 +1,32 @@
-import { Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { AvatarDot } from '@/components/avatar-dot';
 import { ThemedText } from '@/components/themed-text';
 import { Accent, Spacing } from '@/constants/theme';
-import type { Contact } from '@/data/contacts';
-import type { FriendStatus } from '@/db/social-repository';
+import type { Person } from '@/data/types';
+import type { FriendStatus } from '@/data/repository';
 import { useTheme } from '@/hooks/use-theme';
 
 type Props = {
-  contact: Contact;
+  contact: Person;
   status?: FriendStatus;
+  /** Opening a conversation is now a round trip; show it on the row that started it. */
+  busy?: boolean;
   onAdd: () => void;
   onAccept: () => void;
   onDecline: () => void;
   onMessage: () => void;
 };
 
-export function FriendRow({ contact, status, onAdd, onAccept, onDecline, onMessage }: Props) {
+export function FriendRow({
+  contact,
+  status,
+  busy,
+  onAdd,
+  onAccept,
+  onDecline,
+  onMessage,
+}: Props) {
   const theme = useTheme();
 
   return (
@@ -27,15 +37,22 @@ export function FriendRow({ contact, status, onAdd, onAccept, onDecline, onMessa
           {contact.name}
         </ThemedText>
         <ThemedText type="small" themeColor="textSecondary">
-          {contact.handle}
+          @{contact.handle}
         </ThemedText>
       </View>
 
       {status === 'accepted' ? (
-        <Pressable onPress={onMessage} style={[styles.action, styles.actionFilled]}>
-          <ThemedText type="small" style={styles.actionFilledText}>
-            Message
-          </ThemedText>
+        <Pressable
+          onPress={onMessage}
+          disabled={busy}
+          style={[styles.action, styles.actionFilled, busy && styles.actionBusy]}>
+          {busy ? (
+            <ActivityIndicator color="#ffffff" size="small" />
+          ) : (
+            <ThemedText type="small" style={styles.actionFilledText}>
+              Message
+            </ThemedText>
+          )}
         </Pressable>
       ) : status === 'pending_out' ? (
         <View style={[styles.action, { backgroundColor: theme.backgroundSelected }]}>
@@ -89,6 +106,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.one + 2,
     borderRadius: 999,
+  },
+  actionBusy: {
+    opacity: 0.85,
   },
   actionFilled: {
     backgroundColor: Accent,

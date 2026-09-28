@@ -1,6 +1,15 @@
 import { useRouter } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MessageInputBar } from '@/components/message-input-bar';
@@ -8,10 +17,11 @@ import { ContactRow, RecipientField } from '@/components/recipient-field';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
-import { searchWithin, type Contact } from '@/data/contacts';
+import type { Person } from '@/data/types';
+import { filterPeople } from '@/lib/people-search';
 import { useTheme } from '@/hooks/use-theme';
 import { useMessageActions } from '@/store/messages-store';
-import { useFriendIds } from '@/store/social-store';
+import { useFriends, useSocialState } from '@/store/social-store';
 import type { Geofence } from '@/lib/geo';
 
 export default function ComposeScreen() {
@@ -19,21 +29,23 @@ export default function ComposeScreen() {
   const theme = useTheme();
   const { createConversation, sendMessage } = useMessageActions();
 
-  const [selected, setSelected] = useState<Contact[]>([]);
+  const [selected, setSelected] = useState<Person[]>([]);
+  const [sending, setSending] = useState(false);
   const [query, setQuery] = useState('');
 
-  const friendIds = useFriendIds();
+  const friends = useFriends();
+  const { state: socialState } = useSocialState();
   const selectedIds = useMemo(() => selected.map((c) => c.id), [selected]);
   // Compose is friends-only; strangers are added from the people screen first.
   const results = useMemo(
-    () => searchWithin(friendIds, query, selectedIds),
-    [friendIds, query, selectedIds],
+    () => filterPeople(friends, query, selectedIds),
+    [friends, query, selectedIds],
   );
 
   const isGroup = selected.length > 1;
   const showResults = query.length > 0 || selected.length === 0;
 
-  const addContact = (contact: Contact) => {
+  const addContact = (contact: Person) => {
     setSelected((prev) => [...prev, contact]);
     setQuery('');
   };
@@ -42,12 +54,27 @@ export default function ComposeScreen() {
     setSelected((prev) => prev.filter((c) => c.id !== id));
   };
 
-  const handleSend = (body: string, fence?: Geofence) => {
-    if (selected.length === 0) return;
+  const handleSend = async (body: string, fence?: Geofence): Promise<boolean> => {
+    if (selected.length === 0 || sending) return false;
+    setSending(true);
+
     const title = isGroup ? selected.map((c) => c.name.split(' ')[0]).join(', ') : undefined;
-    const conversationId = createConversation(selectedIds, title);
-    sendMessage(conversationId, body, fence);
-    router.replace({ pathname: '/conversation/[id]', params: { id: conversationId } });
+    const { id, error } = await createConversation(selectedIds, title);
+    if (!id) {
+      setSending(false);
+      Alert.alert('Could not start the conversation', error ?? 'Please try again.');
+      return false;
+    }
+
+    const sent = await sendMessage(id, body, fence);
+    setSending(false);
+    if (sent.error) {
+      Alert.alert('Message not sent', sent.error);
+      return false;
+    }
+
+    router.replace({ pathname: '/conversation/[id]', params: { id } });
+    return true;
   };
 
   return (
@@ -88,16 +115,20 @@ export default function ComposeScreen() {
                 <ContactRow contact={item} onPress={() => addContact(item)} />
               )}
               ListEmptyComponent={
-                <View style={styles.emptyWrap}>
-                  <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
-                    {friendIds.length === 0
-                      ? 'You can only message friends. Add someone first.'
-                      : `No friends match “${query}”`}
-                  </ThemedText>
-                  <Pressable onPress={() => router.push('/people')} hitSlop={8}>
-                    <ThemedText type="linkPrimary">Find people</ThemedText>
-                  </Pressable>
-                </View>
+                socialState === 'loading' || socialState === 'idle' ? (
+                  <ActivityIndicator style={styles.loading} />
+                ) : (
+                  <View style={styles.emptyWrap}>
+                    <ThemedText type="small" themeColor="textSecondary" style={styles.empty}>
+                      {friends.length === 0
+                        ? 'You can only message friends. Add someone first.'
+                        : `No friends match “${query}”`}
+                    </ThemedText>
+                    <Pressable onPress={() => router.push('/people')} hitSlop={8}>
+                      <ThemedText type="linkPrimary">Find people</ThemedText>
+                    </Pressable>
+                  </View>
+                )
               }
             />
           ) : (
@@ -112,8 +143,10 @@ export default function ComposeScreen() {
 
           <MessageInputBar
             onSend={handleSend}
-            disabled={selected.length === 0}
-            placeholder={selected.length === 0 ? 'Add someone first' : 'Message'}
+            disabled={selected.length === 0 || sending}
+            placeholder={
+              selected.length === 0 ? 'Add someone first' : sending ? 'Sending…' : 'Message'
+            }
           />
         </KeyboardAvoidingView>
       </SafeAreaView>
@@ -151,6 +184,9 @@ const styles = StyleSheet.create({
   emptyWrap: {
     alignItems: 'center',
     gap: Spacing.two,
+    paddingTop: Spacing.four,
+  },
+  loading: {
     paddingTop: Spacing.four,
   },
   empty: {

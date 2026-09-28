@@ -4,7 +4,6 @@ import { FenceBadge } from '@/components/fence-chip';
 import { GlassPanel } from '@/components/glass-panel';
 import { ThemedText } from '@/components/themed-text';
 import { Accent, Spacing } from '@/constants/theme';
-import { contactById } from '@/data/contacts';
 import type { Message } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { formatDistance, formatRadius } from '@/lib/geo';
@@ -42,13 +41,11 @@ export function MessageBubble({
     borderBottomRightRadius: isMine && isLastInRun ? 4 : 18,
   };
 
-  const sender = contactById(message.senderId);
-
   return (
     <View style={[styles.row, isMine ? styles.rowMine : styles.rowTheirs]}>
-      {showSender && !isMine && sender ? (
+      {showSender && !isMine ? (
         <ThemedText type="small" themeColor="textSecondary" style={styles.senderName}>
-          {sender.name}
+          {message.sender.name}
         </ThemedText>
       ) : null}
 
