@@ -6,16 +6,9 @@ export type Contact = {
 
 export const ME_ID = 'me';
 
-export const AVATAR_COLORS = [
-  '#3c87f7',
-  '#e0668a',
-  '#f2a94b',
-  '#57c07f',
-  '#a373e6',
-  '#4bc0c0',
-  '#ef6f6c',
-  '#7a8b99',
-] as const;
+// Moved to @/lib/avatar — re-exported so existing imports keep working until
+// this file is deleted along with the fixtures.
+export { AVATAR_COLORS, colorForId, initialsFor } from '@/lib/avatar';
 
 export const CONTACTS: Contact[] = [
   { id: 'ada', name: 'Ada Okafor', handle: '@ada' },
@@ -48,19 +41,6 @@ const CONTACTS_BY_ID = new Map(CONTACTS.map((c) => [c.id, c]));
 
 export function contactById(id: string): Contact | undefined {
   return CONTACTS_BY_ID.get(id);
-}
-
-export function colorForId(id: string): string {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) {
-    hash = (hash * 31 + id.charCodeAt(i)) | 0;
-  }
-  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
-}
-
-export function initialsFor(name: string): string {
-  const parts = name.trim().split(/\s+/).slice(0, 2);
-  return parts.map((p) => p[0]?.toUpperCase() ?? '').join('');
 }
 
 function matches(contact: Contact, query: string): boolean {

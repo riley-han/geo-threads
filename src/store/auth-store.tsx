@@ -9,6 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 
+import { messageOf } from '@/data/repository/errors';
 import type { ProfileRow } from '@/lib/supabase-types';
 import { startAutoRefreshWithAppState, supabase } from '@/lib/supabase';
 
@@ -32,12 +33,6 @@ type AuthApi = {
 };
 
 const AuthContext = createContext<AuthApi | null>(null);
-
-/** Supabase errors are user-facing here, so keep the message and drop the rest. */
-const messageOf = (error: unknown): string =>
-  error && typeof error === 'object' && 'message' in error
-    ? String((error as { message: unknown }).message)
-    : 'Something went wrong. Please try again.';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
