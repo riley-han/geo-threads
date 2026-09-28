@@ -1,11 +1,12 @@
 import * as Notifications from 'expo-notifications';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { SQLiteProvider } from 'expo-sqlite';
-import { Suspense, useEffect } from 'react';
+import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
+import { Suspense, useCallback, useEffect, type ReactNode } from 'react';
 import { ActivityIndicator, useColorScheme, View } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { clearMirror } from '@/db/fence-mirror';
 import { DATABASE_NAME, migrateDb } from '@/db/schema';
 import { AuthProvider, useAuth } from '@/store/auth-store';
 import { GeofenceSync } from '@/store/geofence-sync';
@@ -70,6 +71,42 @@ function RootNavigator() {
   );
 }
 
+/**
+ * AuthProvider plus the one piece of teardown that needs the database handle:
+ * the fenced-message mirror, which must not outlive the session that filled it.
+ * Split out because SQLiteProvider sits above AuthProvider, so useSQLiteContext
+ * is only available in a child.
+ */
+function AuthGate({ children }: { children: ReactNode }) {
+  const db = useSQLiteContext();
+  const clear = useCallback(async () => {
+    await clearMirror(db).catch(() => {});
+  }, [db]);
+
+  return <AuthProvider onSignOut={clear}>{children}</AuthProvider>;
+}
+
+/**
+ * Mounts the data providers under a key tied to the signed-in account.
+ *
+ * Switching accounts must not leave the previous user's threads in memory. Doing
+ * that by remount rather than by a reset path means there is no bespoke cleanup
+ * to forget a field in — React discards the state, and every effect (including,
+ * later, realtime subscriptions) tears down through its normal cleanup.
+ *
+ * LocationProvider stays outside: it holds permission state and the GPS watch,
+ * neither of which belongs to an account.
+ */
+function SignedInData({ children }: { children: ReactNode }) {
+  const { session } = useAuth();
+
+  return (
+    <MessagesProvider key={session?.user.id ?? 'signed-out'}>
+      <SocialProvider>{children}</SocialProvider>
+    </MessagesProvider>
+  );
+}
+
 export default function RootLayout() {
   const colorScheme = useColorScheme();
 
@@ -77,18 +114,16 @@ export default function RootLayout() {
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Suspense fallback={<DatabaseFallback />}>
         <SQLiteProvider databaseName={DATABASE_NAME} onInit={migrateDb} useSuspense>
-          <AuthProvider>
+          <AuthGate>
             <LocationProvider>
-              <MessagesProvider>
-                <SocialProvider>
-                  <GeofenceSync>
-                    <AnimatedSplashOverlay />
-                    <RootNavigator />
-                  </GeofenceSync>
-                </SocialProvider>
-              </MessagesProvider>
+              <SignedInData>
+                <GeofenceSync>
+                  <AnimatedSplashOverlay />
+                  <RootNavigator />
+                </GeofenceSync>
+              </SignedInData>
             </LocationProvider>
-          </AuthProvider>
+          </AuthGate>
         </SQLiteProvider>
       </Suspense>
     </ThemeProvider>

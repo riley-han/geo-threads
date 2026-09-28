@@ -10,7 +10,11 @@ import { useTheme } from '@/hooks/use-theme';
 import type { Geofence } from '@/lib/geo';
 
 type Props = {
-  onSend: (body: string, fence?: Geofence) => void;
+  /**
+   * Return false (or a promise of it) to keep the draft — a send that failed
+   * should not silently discard what the user typed.
+   */
+  onSend: (body: string, fence?: Geofence) => void | boolean | Promise<void | boolean>;
   disabled?: boolean;
   placeholder?: string;
 };
@@ -23,9 +27,10 @@ export function MessageInputBar({ onSend, disabled, placeholder = 'Message' }: P
 
   const canSend = body.trim().length > 0 && !disabled;
 
-  const send = () => {
+  const send = async () => {
     if (!canSend) return;
-    onSend(body.trim(), fence);
+    const result = await onSend(body.trim(), fence);
+    if (result === false) return;
     setBody('');
     setFence(undefined);
   };

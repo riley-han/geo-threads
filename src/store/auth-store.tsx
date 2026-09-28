@@ -34,7 +34,14 @@ type AuthApi = {
 
 const AuthContext = createContext<AuthApi | null>(null);
 
-export function AuthProvider({ children }: { children: ReactNode }) {
+export function AuthProvider({
+  children,
+  onSignOut,
+}: {
+  children: ReactNode;
+  /** Runs before the session is torn down, for state that must not outlive it. */
+  onSignOut?: () => Promise<void>;
+}) {
   const [session, setSession] = useState<Session | null>(null);
   // Tagged with the user it was loaded for, so signing out or switching account
   // makes the stale profile fall away by derivation rather than by an effect
@@ -135,6 +142,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
 
       signOut: async () => {
+        // Before the session goes: a mirrored row outliving it would let a
+        // background arrival name the previous account's sender.
+        await onSignOut?.();
         const { error } = await supabase.auth.signOut();
         return { error: error ? messageOf(error) : null };
       },
@@ -159,7 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       refreshProfile,
     }),
-    [session, profile, initializing, userId, refreshProfile],
+    [session, profile, initializing, userId, refreshProfile, onSignOut],
   );
 
   return <AuthContext.Provider value={api}>{children}</AuthContext.Provider>;
