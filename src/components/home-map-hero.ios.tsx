@@ -1,11 +1,13 @@
 import { AppleMaps } from 'expo-maps';
 import { StyleSheet, View } from 'react-native';
 
-import { Accent, AccentFill } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { zoomForRadius } from '@/lib/geo';
 import type { HomeMapHeroProps } from './home-map-hero.types';
 
 export function HomeMapHero({ position, fences }: HomeMapHeroProps) {
+  const theme = useTheme();
+
   return (
     <View style={styles.wrap} pointerEvents="none">
       <AppleMaps.View
@@ -18,15 +20,15 @@ export function HomeMapHero({ position, fences }: HomeMapHeroProps) {
           id: `fence-${i}`,
           coordinates: { latitude: f.latitude, longitude: f.longitude },
           systemImage: 'lock.fill',
-          tintColor: Accent,
+          tintColor: theme.accent,
           title: f.label,
         }))}
         circles={fences.map((f, i) => ({
           id: `circle-${i}`,
           center: { latitude: f.latitude, longitude: f.longitude },
           radius: f.radiusMeters,
-          color: AccentFill,
-          lineColor: Accent,
+          color: theme.accentFill,
+          lineColor: theme.accent,
           width: 1,
         }))}
         uiSettings={{

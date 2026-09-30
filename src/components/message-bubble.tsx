@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { FenceBadge } from '@/components/fence-chip';
 import { GlassPanel } from '@/components/glass-panel';
 import { ThemedText } from '@/components/themed-text';
-import { Accent, Spacing } from '@/constants/theme';
+import { Fonts, Spacing } from '@/constants/theme';
 import type { Message } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { formatDistance, formatRadius } from '@/lib/geo';
@@ -62,7 +62,7 @@ export function MessageBubble({
             <ThemedText type="small" themeColor="textSecondary" style={styles.lockHint}>
               At {visibility.fence.label}
             </ThemedText>
-            <ThemedText type="small" style={styles.lockDistance}>
+            <ThemedText type="small" style={[styles.lockDistance, { color: theme.accentText }]}>
               Tap to unlock
             </ThemedText>
           </GlassPanel>
@@ -77,13 +77,13 @@ export function MessageBubble({
             Unlock within {formatRadius(visibility.fence.radiusMeters)} of {visibility.fence.label}
           </ThemedText>
           {Number.isFinite(visibility.distanceMeters) ? (
-            <ThemedText type="small" style={styles.lockDistance}>
+            <ThemedText type="small" style={[styles.lockDistance, { color: theme.accentText }]}>
               {formatDistance(visibility.distanceMeters)} away
             </ThemedText>
           ) : null}
           {onRequestArrivalAlerts ? (
             <Pressable onPress={onRequestArrivalAlerts} hitSlop={6} style={styles.alertsLink}>
-              <ThemedText type="small" style={styles.lockDistance}>
+              <ThemedText type="small" style={[styles.lockDistance, { color: theme.accentText }]}>
                 Notify me when I&apos;m nearby
               </ThemedText>
             </Pressable>
@@ -95,21 +95,18 @@ export function MessageBubble({
             styles.bubble,
             bubbleRadius,
             isMine
-              ? { backgroundColor: Accent }
+              ? { backgroundColor: theme.primary }
               : { backgroundColor: theme.backgroundElement },
           ]}>
-          <ThemedText
-            type="default"
-            style={[styles.body, isMine && styles.bodyMine]}>
+          <ThemedText type="default" style={[styles.body, isMine && { color: theme.onPrimary }]}>
             {message.body}
           </ThemedText>
-          {fence ? <FenceBadge fence={fence} tone={isMine ? 'onAccent' : 'muted'} /> : null}
+          {fence ? <FenceBadge fence={fence} tone={isMine ? 'onPrimary' : 'muted'} /> : null}
         </View>
       )}
     </View>
   );
 }
-
 
 const styles = StyleSheet.create({
   row: {
@@ -148,8 +145,7 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   lockDistance: {
-    color: Accent,
-    fontWeight: '600',
+    fontFamily: Fonts.bodyBold,
   },
   alertsLink: {
     marginTop: Spacing.one,
@@ -157,8 +153,5 @@ const styles = StyleSheet.create({
   body: {
     fontSize: 16,
     lineHeight: 21,
-  },
-  bodyMine: {
-    color: '#ffffff',
   },
 });

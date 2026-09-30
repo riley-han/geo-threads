@@ -1,7 +1,7 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Accent, Spacing } from '@/constants/theme';
+import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { formatRadius, type Geofence } from '@/lib/geo';
 
@@ -9,9 +9,9 @@ export function FenceChip({ fence, onRemove }: { fence: Geofence; onRemove?: () 
   const theme = useTheme();
 
   return (
-    <View style={[styles.chip, { backgroundColor: theme.backgroundSelected }]}>
+    <View style={[styles.chip, { backgroundColor: theme.secondarySoft }]}>
       <ThemedText style={styles.pin}>📍</ThemedText>
-      <ThemedText type="small" numberOfLines={1} style={styles.label}>
+      <ThemedText type="small" numberOfLines={1} style={[styles.label, { color: theme.secondary }]}>
         {fence.label}
       </ThemedText>
       <ThemedText type="small" themeColor="textSecondary">
@@ -29,16 +29,24 @@ export function FenceChip({ fence, onRemove }: { fence: Geofence; onRemove?: () 
 }
 
 /** Compact inline badge for an already-sent geofenced message. */
-export function FenceBadge({ fence, tone = 'muted' }: { fence: Geofence; tone?: 'muted' | 'onAccent' }) {
-  const onAccent = tone === 'onAccent';
+export function FenceBadge({
+  fence,
+  tone = 'muted',
+}: {
+  fence: Geofence;
+  tone?: 'muted' | 'onPrimary';
+}) {
+  const theme = useTheme();
+  const onPrimary = tone === 'onPrimary';
+  const onPrimaryStyle = onPrimary && [styles.badgeOnPrimary, { color: theme.onPrimary }];
   return (
     <View style={styles.badge}>
-      <ThemedText style={[styles.badgePin, onAccent && styles.badgeOnAccent]}>📍</ThemedText>
+      <ThemedText style={[styles.badgePin, onPrimaryStyle]}>📍</ThemedText>
       <ThemedText
         type="small"
-        themeColor={onAccent ? undefined : 'textSecondary'}
+        themeColor={onPrimary ? undefined : 'textSecondary'}
         numberOfLines={1}
-        style={[styles.badgeLabel, onAccent && styles.badgeOnAccent]}>
+        style={[styles.badgeLabel, onPrimaryStyle]}>
         {fence.label} · {formatRadius(fence.radiusMeters)}
       </ThemedText>
     </View>
@@ -61,8 +69,7 @@ const styles = StyleSheet.create({
   },
   label: {
     flexShrink: 1,
-    fontWeight: '600',
-    color: Accent,
+    fontFamily: Fonts.bodyBold,
   },
   remove: {
     marginLeft: Spacing.half,
@@ -84,7 +91,7 @@ const styles = StyleSheet.create({
     lineHeight: 16,
     flexShrink: 1,
   },
-  badgeOnAccent: {
-    color: 'rgba(255,255,255,0.85)',
+  badgeOnPrimary: {
+    opacity: 0.85,
   },
 });

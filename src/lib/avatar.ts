@@ -4,16 +4,23 @@
  * and a name into initials, and nothing else.
  */
 
+/**
+ * Indigo Lake companions, each dark enough to carry white initials in both
+ * themes. The order is part of the contract: `colorForId` indexes into it, so
+ * reordering repaints everyone.
+ */
 export const AVATAR_COLORS = [
-  '#3c87f7',
-  '#e0668a',
-  '#f2a94b',
-  '#57c07f',
-  '#a373e6',
-  '#4bc0c0',
-  '#ef6f6c',
-  '#7a8b99',
+  '#3D63B8', // ai (indigo)
+  '#B04A6C', // sakura
+  '#946115', // ichō (ginkgo)
+  '#4E7F4A', // koke (moss)
+  '#7A5294', // fuji (wisteria)
+  '#1A7872', // glacier
+  '#B34A31', // momiji (maple)
+  '#5D6B82', // slate
 ] as const;
+
+export const AVATAR_TEXT = '#FFFFFF';
 
 /**
  * The pre-UUID hash: `hash * 31 + charCode`. Kept for seeds that are not uuids —

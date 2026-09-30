@@ -2,7 +2,7 @@ import { forwardRef, useImperativeHandle } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Accent, AccentFill, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { formatRadius } from '@/lib/geo';
 import type { FencePickerMapHandle, FencePickerMapProps } from './fence-picker-map.types';
@@ -20,9 +20,9 @@ export const FencePickerMap = forwardRef<FencePickerMapHandle, FencePickerMapPro
 
     return (
       <View style={[styles.wrap, { backgroundColor: theme.backgroundElement }]}>
-        <View style={[styles.ringOuter, { borderColor: Accent }]}>
-          <View style={styles.ringInner} />
-          <View style={styles.pin} />
+        <View style={[styles.ringOuter, { borderColor: theme.accent }]}>
+          <View style={[styles.ringInner, { backgroundColor: theme.accentFill }]} />
+          <View style={[styles.pin, { backgroundColor: theme.accent }]} />
         </View>
         <ThemedText type="smallBold">{formatRadius(radiusMeters)} radius</ThemedText>
         <ThemedText type="small" themeColor="textSecondary" style={styles.coords}>
@@ -56,13 +56,11 @@ const styles = StyleSheet.create({
     right: 0,
     bottom: 0,
     borderRadius: 60,
-    backgroundColor: AccentFill,
   },
   pin: {
     width: 14,
     height: 14,
     borderRadius: 7,
-    backgroundColor: Accent,
   },
   coords: {
     fontVariant: ['tabular-nums'],

@@ -3,7 +3,7 @@ import { PanResponder, StyleSheet, View, type LayoutChangeEvent } from 'react-na
 
 import { ThemedText } from '@/components/themed-text';
 import { RADIUS_STEPS } from '@/data/places';
-import { Accent, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import { formatRadius } from '@/lib/geo';
 
@@ -62,9 +62,16 @@ export function RadiusSlider({ value, onChange }: Props) {
 
       <View style={styles.trackArea} onLayout={onLayout} {...responder.panHandlers}>
         <View style={[styles.track, { backgroundColor: theme.backgroundSelected }]}>
-          <View style={[styles.fill, { width: `${progress * 100}%` }]} />
+          <View
+            style={[styles.fill, { width: `${progress * 100}%`, backgroundColor: theme.accent }]}
+          />
         </View>
-        <View style={[styles.thumb, { left: thumbLeft, borderColor: theme.background }]} />
+        <View
+          style={[
+            styles.thumb,
+            { left: thumbLeft, borderColor: theme.background, backgroundColor: theme.accent },
+          ]}
+        />
       </View>
 
       <View style={styles.scale}>
@@ -99,14 +106,12 @@ const styles = StyleSheet.create({
   },
   fill: {
     height: '100%',
-    backgroundColor: Accent,
   },
   thumb: {
     position: 'absolute',
     width: THUMB,
     height: THUMB,
     borderRadius: THUMB / 2,
-    backgroundColor: Accent,
     borderWidth: 3,
   },
   scale: {

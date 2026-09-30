@@ -1,11 +1,13 @@
 import { AppleMaps } from 'expo-maps';
 import { StyleSheet } from 'react-native';
 
-import { Accent, AccentFill } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { zoomForRadius } from '@/lib/geo';
 import type { MapCanvasProps } from './map-canvas.types';
 
 export function MapCanvas({ position, fences, onSelectFence }: MapCanvasProps) {
+  const theme = useTheme();
+
   return (
     <AppleMaps.View
       style={StyleSheet.absoluteFill}
@@ -17,15 +19,15 @@ export function MapCanvas({ position, fences, onSelectFence }: MapCanvasProps) {
         id: String(i),
         coordinates: { latitude: f.latitude, longitude: f.longitude },
         systemImage: 'lock.fill',
-        tintColor: Accent,
+        tintColor: theme.accent,
         title: f.label,
       }))}
       circles={fences.map((f, i) => ({
         id: `c-${i}`,
         center: { latitude: f.latitude, longitude: f.longitude },
         radius: f.radiusMeters,
-        color: AccentFill,
-        lineColor: Accent,
+        color: theme.accentFill,
+        lineColor: theme.accent,
         width: 2,
       }))}
       uiSettings={{ compassEnabled: true, scaleBarEnabled: true }}

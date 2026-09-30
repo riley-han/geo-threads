@@ -1,7 +1,7 @@
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Accent, AccentFill, Spacing } from '@/constants/theme';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { HomeMapHeroProps } from './home-map-hero.types';
 
@@ -11,8 +11,8 @@ export function HomeMapHero({ fences }: HomeMapHeroProps) {
 
   return (
     <View style={[styles.wrap, { backgroundColor: theme.backgroundElement }]}>
-      <View style={styles.ring}>
-        <View style={styles.dot} />
+      <View style={[styles.ring, { borderColor: theme.accent, backgroundColor: theme.accentFill }]}>
+        <View style={[styles.dot, { backgroundColor: theme.accent }]} />
       </View>
       <ThemedText type="small" themeColor="textSecondary">
         {fences.length > 0
@@ -35,8 +35,6 @@ const styles = StyleSheet.create({
     height: 68,
     borderRadius: 34,
     borderWidth: 2,
-    borderColor: Accent,
-    backgroundColor: AccentFill,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -44,6 +42,5 @@ const styles = StyleSheet.create({
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: Accent,
   },
 });

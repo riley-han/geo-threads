@@ -1,5 +1,7 @@
 import { StyleSheet, Text, View, type ViewStyle, type StyleProp } from 'react-native';
 
+import { Brand, Fonts } from '@/constants/theme';
+
 type Props = {
   size?: number;
   style?: StyleProp<ViewStyle>;
@@ -24,13 +26,13 @@ export function GeoThreadsMark({ size = 64, style }: Props) {
 
 const styles = StyleSheet.create({
   tile: {
-    backgroundColor: '#3c87f7',
+    backgroundColor: Brand.indigo,
     alignItems: 'center',
     justifyContent: 'center',
   },
   label: {
-    color: '#ffffff',
-    fontWeight: '700',
+    color: Brand.gold,
+    fontFamily: Fonts.display,
     letterSpacing: 0.5,
   },
 });

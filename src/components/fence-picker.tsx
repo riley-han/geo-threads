@@ -7,7 +7,7 @@ import type { FencePickerMapHandle } from '@/components/fence-picker-map.types';
 import { RadiusSlider } from '@/components/radius-slider';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Accent, Spacing } from '@/constants/theme';
+import { Fonts, Spacing } from '@/constants/theme';
 import {
   DEFAULT_POSITION,
   DEFAULT_RADIUS_M,
@@ -74,9 +74,7 @@ export function FencePicker({ initialFence, onConfirm, onCancel }: Props) {
         </Pressable>
         <ThemedText type="smallBold">Add geofence</ThemedText>
         <Pressable onPress={confirm} hitSlop={10}>
-          <ThemedText type="linkPrimary" style={styles.confirm}>
-            Attach
-          </ThemedText>
+          <ThemedText type="linkPrimary">Attach</ThemedText>
         </Pressable>
       </View>
 
@@ -110,9 +108,13 @@ export function FencePicker({ initialFence, onConfirm, onCancel }: Props) {
                   onPress={() => jumpTo(place, place.name)}
                   style={[
                     styles.placeChip,
-                    { backgroundColor: active ? Accent : theme.backgroundSelected },
+                    { backgroundColor: active ? theme.accent : theme.backgroundSelected },
                   ]}>
-                  <ThemedText type="small" style={active ? styles.placeChipActive : undefined}>
+                  <ThemedText
+                    type="small"
+                    style={
+                      active ? [styles.placeChipActive, { color: theme.onAccent }] : undefined
+                    }>
                     {place.name}
                   </ThemedText>
                 </Pressable>
@@ -168,9 +170,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.three,
   },
-  confirm: {
-    fontWeight: '700',
-  },
   body: {
     flex: 1,
   },
@@ -192,10 +191,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   placeChipActive: {
-    color: '#ffffff',
-    fontWeight: '600',
+    fontFamily: Fonts.bodyBold,
   },
   labelInput: {
+    fontFamily: Fonts.body,
     fontSize: 16,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two + 2,

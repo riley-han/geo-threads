@@ -3,12 +3,14 @@ import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Accent, AccentFill, Spacing } from '@/constants/theme';
+import { Brand, Fonts, Spacing } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
 import { zoomForRadius, type LatLng } from '@/lib/geo';
 import type { FencePickerMapHandle, FencePickerMapProps } from './fence-picker-map.types';
 
 export const FencePickerMap = forwardRef<FencePickerMapHandle, FencePickerMapProps>(
   function FencePickerMap({ center, radiusMeters, onMove }, ref) {
+    const theme = useTheme();
     const mapRef = useRef<AppleMaps.MapView>(null);
 
     // Captured once: passing a changing cameraPosition re-frames the map on every
@@ -41,7 +43,7 @@ export const FencePickerMap = forwardRef<FencePickerMapHandle, FencePickerMapPro
               id: 'fence-center',
               coordinates: { latitude: center.latitude, longitude: center.longitude },
               systemImage: 'mappin.circle.fill',
-              tintColor: Accent,
+              tintColor: theme.accent,
               title: 'Fence center',
             },
           ]}
@@ -50,8 +52,8 @@ export const FencePickerMap = forwardRef<FencePickerMapHandle, FencePickerMapPro
               id: 'fence-circle',
               center: { latitude: center.latitude, longitude: center.longitude },
               radius: radiusMeters,
-              color: AccentFill,
-              lineColor: Accent,
+              color: theme.accentFill,
+              lineColor: theme.accent,
               width: 2,
             },
           ]}
@@ -95,25 +97,25 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: Spacing.two,
     right: Spacing.two,
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: Brand.mapLabel,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.one,
     borderRadius: 999,
   },
   fitText: {
-    color: '#ffffff',
-    fontWeight: '600',
+    color: Brand.onMapLabel,
+    fontFamily: Fonts.bodyBold,
   },
   hint: {
     position: 'absolute',
     bottom: Spacing.two,
     alignSelf: 'center',
-    backgroundColor: 'rgba(0,0,0,0.55)',
+    backgroundColor: Brand.mapLabel,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.one,
     borderRadius: 999,
   },
   hintText: {
-    color: '#ffffff',
+    color: Brand.onMapLabel,
   },
 });

@@ -1,21 +1,20 @@
-import { useEffect, useState } from 'react';
-import { useColorScheme as useRNColorScheme } from 'react-native';
+import { useSyncExternalStore } from 'react';
+
+import { useAppearance, type ResolvedScheme } from '@/store/appearance-store';
+
+const noopSubscribe = () => () => {};
 
 /**
- * To support static rendering, this value needs to be re-calculated on the client side for web
+ * To support static rendering, the stored choice is only applied on the client;
+ * the server snapshot (and so the first hydrating render) uses the default dark scheme.
  */
-export function useColorScheme() {
-  const [hasHydrated, setHasHydrated] = useState(false);
+export function useColorScheme(): ResolvedScheme {
+  const isClient = useSyncExternalStore(
+    noopSubscribe,
+    () => true,
+    () => false,
+  );
+  const { scheme } = useAppearance();
 
-  useEffect(() => {
-    setHasHydrated(true);
-  }, []);
-
-  const colorScheme = useRNColorScheme();
-
-  if (hasHydrated) {
-    return colorScheme;
-  }
-
-  return 'light';
+  return isClient ? scheme : 'dark';
 }

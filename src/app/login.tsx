@@ -15,11 +15,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { GeoThreadsMark } from '@/components/geo-threads-mark';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Colors, Spacing } from '@/constants/theme';
+import { Fonts, Radius, Spacing } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { useAuth } from '@/store/auth-store';
 
-const ACCENT = '#3c87f7';
+/** Google's own red for its glyph; a third-party mark, so not a theme token. */
+const GOOGLE_RED = '#EA4335';
 const FORM_MAX_WIDTH = 360;
 
 type Mode = 'sign-in' | 'sign-up';
@@ -27,7 +29,7 @@ type Mode = 'sign-in' | 'sign-up';
 export default function LoginScreen() {
   const router = useRouter();
   const theme = useTheme();
-  const isDark = theme === Colors.dark;
+  const isDark = useColorScheme() === 'dark';
   const { signIn, signUp, sendPasswordReset } = useAuth();
 
   const [mode, setMode] = useState<Mode>('sign-in');
@@ -135,6 +137,9 @@ export default function LoginScreen() {
               <ThemedText type="subtitle" style={styles.title}>
                 Geo Threads
               </ThemedText>
+              <ThemedText type="small" themeColor="textSecondary" style={styles.title}>
+                Leave a note where it matters.
+              </ThemedText>
             </View>
 
             <ThemedView type="backgroundElement" style={styles.card}>
@@ -185,13 +190,17 @@ export default function LoginScreen() {
               />
 
               {error ? (
-                <ThemedText type="small" style={styles.error}>
+                <ThemedText type="small" themeColor="danger">
                   {error}
                 </ThemedText>
               ) : null}
 
               {isSignUp ? null : (
-                <Pressable onPress={forgotPassword} disabled={busy} hitSlop={8} style={styles.forgotWrap}>
+                <Pressable
+                  onPress={forgotPassword}
+                  disabled={busy}
+                  hitSlop={8}
+                  style={styles.forgotWrap}>
                   <ThemedText type="linkPrimary">Forgot password?</ThemedText>
                 </Pressable>
               )}
@@ -201,12 +210,12 @@ export default function LoginScreen() {
                 disabled={busy}
                 style={({ pressed }) => [
                   styles.primaryButton,
-                  { opacity: pressed || busy ? 0.85 : 1 },
+                  { backgroundColor: theme.primary, opacity: pressed || busy ? 0.85 : 1 },
                 ]}>
                 {busy ? (
-                  <ActivityIndicator color="#ffffff" />
+                  <ActivityIndicator color={theme.onPrimary} />
                 ) : (
-                  <ThemedText type="default" style={styles.primaryLabel}>
+                  <ThemedText type="defaultBold" style={{ color: theme.onPrimary }}>
                     {isSignUp ? 'Create account' : 'Sign in'}
                   </ThemedText>
                 )}
@@ -227,7 +236,7 @@ export default function LoginScreen() {
               style={({ pressed }) => [
                 styles.gmailButton,
                 {
-                  borderColor: theme.backgroundSelected,
+                  borderColor: theme.border,
                   backgroundColor: isDark ? theme.backgroundElement : theme.background,
                   opacity: pressed ? 0.85 : 1,
                 },
@@ -300,29 +309,22 @@ const styles = StyleSheet.create({
     gap: Spacing.three,
   },
   input: {
+    fontFamily: Fonts.body,
     fontSize: 16,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two + 2,
-    borderRadius: Spacing.two,
-  },
-  error: {
-    color: '#ef6f6c',
+    borderRadius: Radius.medium,
   },
   forgotWrap: {
     alignSelf: 'flex-end',
     marginTop: -Spacing.one,
   },
   primaryButton: {
-    backgroundColor: ACCENT,
     paddingVertical: Spacing.three - 2,
-    borderRadius: Spacing.two,
+    borderRadius: Radius.medium,
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 44,
-  },
-  primaryLabel: {
-    color: '#ffffff',
-    fontWeight: '600',
   },
   dividerRow: {
     flexDirection: 'row',
@@ -339,19 +341,19 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: Spacing.two,
     paddingVertical: Spacing.three - 2,
-    borderRadius: Spacing.two,
+    borderRadius: Radius.medium,
     borderWidth: 1,
   },
   gmailGlyph: {
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: '#ea4335',
+    backgroundColor: GOOGLE_RED,
     alignItems: 'center',
     justifyContent: 'center',
   },
   gmailGlyphText: {
-    color: '#ffffff',
+    color: '#FFFFFF',
     fontSize: 12,
     lineHeight: 14,
   },
