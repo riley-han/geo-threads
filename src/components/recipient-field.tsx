@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { AvatarDot } from '@/components/avatar-dot';
 import { ThemedText } from '@/components/themed-text';
-import { Accent, Spacing } from '@/constants/theme';
+import { Fonts, Spacing } from '@/constants/theme';
 import type { Person } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 
@@ -33,7 +33,7 @@ export function RecipientField({ selected, query, onQueryChange, onRemove }: Pro
             key={contact.id}
             onPress={() => onRemove(contact.id)}
             style={[styles.token, { backgroundColor: theme.backgroundSelected }]}>
-            <ThemedText type="small" style={styles.tokenText}>
+            <ThemedText type="small" style={[styles.tokenText, { color: theme.tint }]}>
               {contact.name}
             </ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
@@ -105,11 +105,11 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   tokenText: {
-    color: Accent,
-    fontWeight: '600',
+    fontFamily: Fonts.bodyBold,
   },
   input: {
     flexGrow: 1,
+    fontFamily: Fonts.body,
     minWidth: 120,
     fontSize: 16,
     paddingVertical: 4,

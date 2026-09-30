@@ -1,7 +1,8 @@
 import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { colorForId, initialsFor } from '@/lib/avatar';
+import { Fonts } from '@/constants/theme';
+import { AVATAR_TEXT, colorForId, initialsFor } from '@/lib/avatar';
 
 type Props = {
   id: string;
@@ -29,8 +30,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   avatarText: {
-    color: '#ffffff',
-    fontWeight: '600',
+    color: AVATAR_TEXT,
+    fontFamily: Fonts.bodyBold,
     letterSpacing: 0.5,
   },
 });

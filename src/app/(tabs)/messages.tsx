@@ -16,16 +16,12 @@ import { AvatarDot } from '@/components/avatar-dot';
 import { GlassPanel } from '@/components/glass-panel';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Accent, BottomTabInset, Spacing } from '@/constants/theme';
+import { BottomTabInset, Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { LatLng } from '@/lib/geo';
 import { useCurrentPosition } from '@/store/location-store';
 import { messageVisibility } from '@/lib/message-visibility';
-import {
-  useConversations,
-  useInboxState,
-  type ConversationSummary,
-} from '@/store/messages-store';
+import { useConversations, useInboxState, type ConversationSummary } from '@/store/messages-store';
 
 const HEADER_HEIGHT = 140;
 const FAB_SIZE = 56;
@@ -178,9 +174,14 @@ function InboxRow({
   return (
     <Pressable
       onPress={onPress}
-      style={({ pressed }) => [styles.row, pressed && { backgroundColor: theme.backgroundElement }]}>
+      style={({ pressed }) => [
+        styles.row,
+        pressed && { backgroundColor: theme.backgroundElement },
+      ]}>
       <View style={styles.unreadColumn}>
-        {conversation.unread ? <View style={styles.unreadDot} /> : null}
+        {conversation.unread ? (
+          <View style={[styles.unreadDot, { backgroundColor: theme.accentText }]} />
+        ) : null}
       </View>
       <View style={styles.avatarSlot}>
         <AvatarDot id={avatarSeed} name={conversation.title} size={44} />
@@ -234,7 +235,7 @@ const styles = StyleSheet.create({
   headerTitle: {
     fontSize: 34,
     lineHeight: 40,
-    fontWeight: '700',
+    fontFamily: Fonts.display,
   },
   searchChip: {
     flexDirection: 'row',
@@ -250,6 +251,7 @@ const styles = StyleSheet.create({
   },
   searchInput: {
     flex: 1,
+    fontFamily: Fonts.body,
     fontSize: 15,
     paddingVertical: 0,
   },
@@ -283,7 +285,6 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
-    backgroundColor: Accent,
   },
   rowBody: {
     flex: 1,
@@ -299,7 +300,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   nameUnread: {
-    fontWeight: '700',
+    fontFamily: Fonts.bodyBold,
   },
   rowPin: {
     fontSize: 11,
@@ -312,7 +313,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   previewUnread: {
-    fontWeight: '600',
+    fontFamily: Fonts.bodyMedium,
   },
   separator: {
     position: 'absolute',
@@ -345,6 +346,6 @@ const styles = StyleSheet.create({
   fabGlyph: {
     fontSize: 22,
     lineHeight: 24,
-    fontWeight: '600',
+    fontFamily: Fonts.bodyBold,
   },
 });

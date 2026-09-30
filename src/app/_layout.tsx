@@ -1,13 +1,23 @@
+import {
+  ZenKakuGothicNew_400Regular,
+  ZenKakuGothicNew_500Medium,
+  ZenKakuGothicNew_700Bold,
+} from '@expo-google-fonts/zen-kaku-gothic-new';
+import { ZenOldMincho_700Bold } from '@expo-google-fonts/zen-old-mincho';
+import { useFonts } from 'expo-font';
 import * as Notifications from 'expo-notifications';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
 import { Suspense, useCallback, useEffect, type ReactNode } from 'react';
-import { ActivityIndicator, useColorScheme, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { Colors } from '@/constants/theme';
 import { clearMirror } from '@/db/fence-mirror';
 import { DATABASE_NAME, migrateDb } from '@/db/schema';
+import { useColorScheme } from '@/hooks/use-color-scheme';
+import { AppearanceProvider } from '@/store/appearance-store';
 import { AuthProvider, useAuth } from '@/store/auth-store';
 import { GeofenceSync } from '@/store/geofence-sync';
 import { LocationProvider } from '@/store/location-store';
@@ -32,8 +42,7 @@ function useNotificationRouting() {
     if (!session) return;
 
     const data = lastResponse?.notification.request.content.data as
-      | { conversationId?: string }
-      | undefined;
+      { conversationId?: string } | undefined;
     if (data?.conversationId) {
       router.push({ pathname: '/conversation/[id]', params: { id: data.conversationId } });
     } else if (lastResponse) {
@@ -108,24 +117,62 @@ function SignedInData({ children }: { children: ReactNode }) {
 }
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  // Only the weights the type scale uses: each CJK face is 2–5 MB.
+  const [fontsLoaded, fontError] = useFonts({
+    ZenKakuGothicNew_400Regular,
+    ZenKakuGothicNew_500Medium,
+    ZenKakuGothicNew_700Bold,
+    ZenOldMincho_700Bold,
+  });
+
+  // The native splash stays up until AnimatedSplashOverlay lays out, so holding
+  // the tree back here keeps it covering the load. On a font error, render with
+  // the system fallback rather than hang on the splash.
+  if (!fontsLoaded && !fontError) return null;
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Suspense fallback={<DatabaseFallback />}>
-        <SQLiteProvider databaseName={DATABASE_NAME} onInit={migrateDb} useSuspense>
-          <AuthGate>
-            <LocationProvider>
-              <SignedInData>
-                <GeofenceSync>
-                  <AnimatedSplashOverlay />
-                  <RootNavigator />
-                </GeofenceSync>
-              </SignedInData>
-            </LocationProvider>
-          </AuthGate>
-        </SQLiteProvider>
-      </Suspense>
+    <AppearanceProvider>
+      <ThemedNavigation>
+        <Suspense fallback={<DatabaseFallback />}>
+          <SQLiteProvider databaseName={DATABASE_NAME} onInit={migrateDb} useSuspense>
+            <AuthGate>
+              <LocationProvider>
+                <SignedInData>
+                  <GeofenceSync>
+                    <AnimatedSplashOverlay />
+                    <RootNavigator />
+                  </GeofenceSync>
+                </SignedInData>
+              </LocationProvider>
+            </AuthGate>
+          </SQLiteProvider>
+        </Suspense>
+      </ThemedNavigation>
+    </AppearanceProvider>
+  );
+}
+
+/** React Navigation's theme, recoloured with our tokens so headers and screen grounds match. */
+function ThemedNavigation({ children }: { children: ReactNode }) {
+  const scheme = useColorScheme();
+  const base = scheme === 'dark' ? DarkTheme : DefaultTheme;
+  const colors = Colors[scheme];
+
+  return (
+    <ThemeProvider
+      value={{
+        ...base,
+        colors: {
+          ...base.colors,
+          primary: colors.tint,
+          background: colors.background,
+          card: colors.backgroundElement,
+          text: colors.text,
+          border: colors.border,
+          notification: colors.accent,
+        },
+      }}>
+      {children}
     </ThemeProvider>
   );
 }

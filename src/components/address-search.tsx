@@ -2,9 +2,14 @@ import { useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Accent, Spacing } from '@/constants/theme';
+import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import { GeocodeError, isGeocodingSupported, searchAddress, type GeocodeResult } from '@/lib/geocode';
+import {
+  GeocodeError,
+  isGeocodingSupported,
+  searchAddress,
+  type GeocodeResult,
+} from '@/lib/geocode';
 
 type Props = {
   onSelect: (result: GeocodeResult) => void;
@@ -30,7 +35,9 @@ export function AddressSearch({ onSelect }: Props) {
     try {
       const found = await searchAddress(trimmed);
       setState(
-        found.length === 0 ? { kind: 'empty', query: trimmed } : { kind: 'results', results: found },
+        found.length === 0
+          ? { kind: 'empty', query: trimmed }
+          : { kind: 'results', results: found },
       );
     } catch (e) {
       setState({
@@ -92,7 +99,7 @@ export function AddressSearch({ onSelect }: Props) {
       ) : null}
 
       {state.kind === 'error' ? (
-        <ThemedText type="small" style={styles.error}>
+        <ThemedText type="small" themeColor="danger">
           {state.message}
         </ThemedText>
       ) : null}
@@ -105,12 +112,18 @@ export function AddressSearch({ onSelect }: Props) {
               onPress={() => choose(result)}
               style={({ pressed }) => [
                 styles.resultRow,
-                i > 0 && { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: theme.backgroundSelected },
+                i > 0 && {
+                  borderTopWidth: StyleSheet.hairlineWidth,
+                  borderTopColor: theme.backgroundSelected,
+                },
                 pressed && { backgroundColor: theme.backgroundElement },
               ]}>
               <ThemedText style={styles.resultPin}>📍</ThemedText>
               <View style={styles.resultText}>
-                <ThemedText type="small" numberOfLines={1} style={styles.resultLabel}>
+                <ThemedText
+                  type="small"
+                  numberOfLines={1}
+                  style={[styles.resultLabel, { color: theme.tint }]}>
                   {result.label}
                 </ThemedText>
                 {result.sublabel ? (
@@ -145,11 +158,9 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
+    fontFamily: Fonts.body,
     fontSize: 15,
     paddingVertical: 0,
-  },
-  error: {
-    color: '#ef6f6c',
   },
   results: {
     borderWidth: StyleSheet.hairlineWidth,
@@ -170,7 +181,6 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   resultLabel: {
-    fontWeight: '600',
-    color: Accent,
+    fontFamily: Fonts.bodyBold,
   },
 });

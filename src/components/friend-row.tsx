@@ -2,7 +2,7 @@ import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
 
 import { AvatarDot } from '@/components/avatar-dot';
 import { ThemedText } from '@/components/themed-text';
-import { Accent, Spacing } from '@/constants/theme';
+import { Fonts, Spacing } from '@/constants/theme';
 import type { Person } from '@/data/types';
 import type { FriendStatus } from '@/data/repository';
 import { useTheme } from '@/hooks/use-theme';
@@ -18,15 +18,7 @@ type Props = {
   onMessage: () => void;
 };
 
-export function FriendRow({
-  contact,
-  status,
-  busy,
-  onAdd,
-  onAccept,
-  onDecline,
-  onMessage,
-}: Props) {
+export function FriendRow({ contact, status, busy, onAdd, onAccept, onDecline, onMessage }: Props) {
   const theme = useTheme();
 
   return (
@@ -45,11 +37,11 @@ export function FriendRow({
         <Pressable
           onPress={onMessage}
           disabled={busy}
-          style={[styles.action, styles.actionFilled, busy && styles.actionBusy]}>
+          style={[styles.action, { backgroundColor: theme.primary }, busy && styles.actionBusy]}>
           {busy ? (
-            <ActivityIndicator color="#ffffff" size="small" />
+            <ActivityIndicator color={theme.onPrimary} size="small" />
           ) : (
-            <ThemedText type="small" style={styles.actionFilledText}>
+            <ThemedText type="small" style={[styles.actionText, { color: theme.onPrimary }]}>
               Message
             </ThemedText>
           )}
@@ -62,8 +54,8 @@ export function FriendRow({
         </View>
       ) : status === 'pending_in' ? (
         <View style={styles.pair}>
-          <Pressable onPress={onAccept} style={[styles.action, styles.actionFilled]}>
-            <ThemedText type="small" style={styles.actionFilledText}>
+          <Pressable onPress={onAccept} style={[styles.action, { backgroundColor: theme.primary }]}>
+            <ThemedText type="small" style={[styles.actionText, { color: theme.onPrimary }]}>
               Accept
             </ThemedText>
           </Pressable>
@@ -78,8 +70,8 @@ export function FriendRow({
       ) : (
         <Pressable
           onPress={onAdd}
-          style={[styles.action, { borderWidth: 1, borderColor: Accent }]}>
-          <ThemedText type="small" style={styles.addText}>
+          style={[styles.action, { borderWidth: 1, borderColor: theme.tint }]}>
+          <ThemedText type="small" style={[styles.actionText, { color: theme.tint }]}>
             Add
           </ThemedText>
         </Pressable>
@@ -110,15 +102,7 @@ const styles = StyleSheet.create({
   actionBusy: {
     opacity: 0.85,
   },
-  actionFilled: {
-    backgroundColor: Accent,
-  },
-  actionFilledText: {
-    color: '#ffffff',
-    fontWeight: '600',
-  },
-  addText: {
-    color: Accent,
-    fontWeight: '600',
+  actionText: {
+    fontFamily: Fonts.bodyBold,
   },
 });

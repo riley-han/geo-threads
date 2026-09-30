@@ -7,7 +7,7 @@ import { GlassPanel } from '@/components/glass-panel';
 import { HomeMapHero } from '@/components/home-map-hero';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Accent, BottomTabInset, Spacing } from '@/constants/theme';
+import { BottomTabInset, Fonts, Radius, Spacing } from '@/constants/theme';
 import { DEFAULT_POSITION } from '@/data/places';
 import type { Message } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
@@ -15,11 +15,7 @@ import { formatDistance, type Geofence } from '@/lib/geo';
 import { messageVisibility } from '@/lib/message-visibility';
 import { useAuth } from '@/store/auth-store';
 import { useCurrentPosition } from '@/store/location-store';
-import {
-  useConversations,
-  useInboxState,
-  usePendingFencedMessages,
-} from '@/store/messages-store';
+import { useConversations, useInboxState, usePendingFencedMessages } from '@/store/messages-store';
 import { useFriends, usePendingRequests, useSocialState } from '@/store/social-store';
 
 const MAP_HEIGHT = 200;
@@ -66,9 +62,7 @@ export default function HomeScreen() {
               <ThemedText type="small" themeColor="textSecondary">
                 Welcome back
               </ThemedText>
-              <ThemedText type="subtitle" style={styles.headerName}>
-                {profile?.name ?? ''}
-              </ThemedText>
+              <ThemedText type="subtitle">{profile?.name ?? ''}</ThemedText>
             </View>
             <Pressable onPress={() => router.push('/profile')} hitSlop={8}>
               {/* Omitted rather than shown with a placeholder name: an avatar
@@ -96,9 +90,7 @@ export default function HomeScreen() {
           />
           <GlassPanel variant="regular" style={styles.mapBadge}>
             <ThemedText type="small" style={styles.mapBadgeText}>
-              {waiting.length > 0
-                ? `${waiting.length} waiting nearby`
-                : 'Nothing waiting nearby'}
+              {waiting.length > 0 ? `${waiting.length} waiting nearby` : 'Nothing waiting nearby'}
             </ThemedText>
           </GlassPanel>
         </Pressable>
@@ -113,8 +105,12 @@ export default function HomeScreen() {
                   <ThemedText type="small" themeColor="textSecondary" style={styles.emptyText}>
                     Nothing waiting nearby. Leave a message somewhere for someone to find.
                   </ThemedText>
-                  <Pressable onPress={() => router.push('/compose')} style={styles.emptyButton}>
-                    <ThemedText type="small" style={styles.emptyButtonText}>
+                  <Pressable
+                    onPress={() => router.push('/compose')}
+                    style={[styles.emptyButton, { backgroundColor: theme.accent }]}>
+                    <ThemedText
+                      type="small"
+                      style={[styles.emptyButtonText, { color: theme.onAccent }]}>
                       New message
                     </ThemedText>
                   </Pressable>
@@ -136,7 +132,9 @@ export default function HomeScreen() {
                   { backgroundColor: theme.backgroundElement },
                   pressed && { opacity: 0.8 },
                 ]}>
-                <ThemedText style={styles.rowGlyph}>🔒</ThemedText>
+                <View style={[styles.rowGlyphTile, { backgroundColor: theme.accentSoft }]}>
+                  <ThemedText style={styles.rowGlyph}>🔒</ThemedText>
+                </View>
                 <View style={styles.rowBody}>
                   <ThemedText type="default" numberOfLines={1}>
                     {message.sender.name}
@@ -145,7 +143,7 @@ export default function HomeScreen() {
                     {fence.label}
                   </ThemedText>
                 </View>
-                <ThemedText type="small" style={styles.rowDistance}>
+                <ThemedText type="small" style={[styles.rowDistance, { color: theme.accentText }]}>
                   {formatDistance(distanceMeters)}
                 </ThemedText>
               </Pressable>
@@ -198,8 +196,11 @@ export default function HomeScreen() {
           {requests.length > 0 ? (
             <Pressable
               onPress={() => router.push('/people')}
-              style={[styles.requestBanner, { borderColor: Accent }]}>
-              <ThemedText type="small" style={styles.requestText}>
+              style={[
+                styles.requestBanner,
+                { borderColor: theme.accent, backgroundColor: theme.accentSoft },
+              ]}>
+              <ThemedText type="small" style={[styles.requestText, { color: theme.accentText }]}>
                 {requests.length} friend request{requests.length === 1 ? '' : 's'}
               </ThemedText>
             </Pressable>
@@ -245,7 +246,7 @@ function Section({
   return (
     <View style={styles.section}>
       <View style={styles.sectionHeader}>
-        <ThemedText type="smallBold">{title}</ThemedText>
+        <ThemedText type="heading">{title}</ThemedText>
         {action ? (
           <Pressable onPress={action.onPress} hitSlop={8}>
             <ThemedText type="linkPrimary">{action.label}</ThemedText>
@@ -276,10 +277,6 @@ const styles = StyleSheet.create({
   headerText: {
     flex: 1,
   },
-  headerName: {
-    fontSize: 26,
-    lineHeight: 32,
-  },
   searchChip: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -294,7 +291,7 @@ const styles = StyleSheet.create({
   },
   mapCard: {
     height: MAP_HEIGHT,
-    borderRadius: Spacing.four,
+    borderRadius: Radius.large,
     overflow: 'hidden',
   },
   mapBadge: {
@@ -306,7 +303,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
   },
   mapBadgeText: {
-    fontWeight: '600',
+    fontFamily: Fonts.bodyBold,
   },
   section: {
     gap: Spacing.two,
@@ -321,24 +318,30 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.three,
     padding: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.large,
+  },
+  rowGlyphTile: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   rowGlyph: {
-    fontSize: 20,
+    fontSize: 16,
   },
   rowBody: {
     flex: 1,
   },
   rowDistance: {
-    color: Accent,
-    fontWeight: '600',
+    fontFamily: Fonts.bodyBold,
   },
   sectionLoading: {
     alignSelf: 'flex-start',
   },
   empty: {
     padding: Spacing.four,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.large,
     alignItems: 'center',
     gap: Spacing.three,
   },
@@ -346,14 +349,12 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
   emptyButton: {
-    backgroundColor: Accent,
     paddingHorizontal: Spacing.four,
     paddingVertical: Spacing.two,
     borderRadius: 999,
   },
   emptyButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
+    fontFamily: Fonts.bodyBold,
   },
   requestBanner: {
     borderWidth: 1,
@@ -362,8 +363,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.three,
   },
   requestText: {
-    color: Accent,
-    fontWeight: '600',
+    fontFamily: Fonts.bodyBold,
   },
   friendRow: {
     flexDirection: 'row',

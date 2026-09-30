@@ -5,7 +5,7 @@ import { FenceChip } from '@/components/fence-chip';
 import { FencePicker } from '@/components/fence-picker';
 import { GlassPanel } from '@/components/glass-panel';
 import { ThemedText } from '@/components/themed-text';
-import { Accent, Spacing } from '@/constants/theme';
+import { Fonts, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 import type { Geofence } from '@/lib/geo';
 
@@ -50,7 +50,7 @@ export function MessageInputBar({ onSend, disabled, placeholder = 'Message' }: P
             hitSlop={8}
             style={[
               styles.fenceButton,
-              { backgroundColor: fence ? Accent : theme.backgroundSelected },
+              { backgroundColor: fence ? theme.accent : theme.backgroundSelected },
             ]}>
             <ThemedText style={styles.fenceGlyph}>📍</ThemedText>
           </Pressable>
@@ -61,18 +61,18 @@ export function MessageInputBar({ onSend, disabled, placeholder = 'Message' }: P
             placeholder={placeholder}
             placeholderTextColor={theme.textSecondary}
             multiline
-            style={[
-              styles.input,
-              { color: theme.text, backgroundColor: theme.backgroundSelected },
-            ]}
+            style={[styles.input, { color: theme.text, backgroundColor: theme.backgroundSelected }]}
           />
 
           <Pressable
             onPress={send}
             disabled={!canSend}
             hitSlop={8}
-            style={[styles.sendButton, { opacity: canSend ? 1 : 0.4 }]}>
-            <ThemedText style={styles.sendGlyph}>↑</ThemedText>
+            style={[
+              styles.sendButton,
+              { backgroundColor: theme.primary, opacity: canSend ? 1 : 0.4 },
+            ]}>
+            <ThemedText style={[styles.sendGlyph, { color: theme.onPrimary }]}>↑</ThemedText>
           </Pressable>
         </View>
       </GlassPanel>
@@ -124,6 +124,7 @@ const styles = StyleSheet.create({
     flex: 1,
     maxHeight: 120,
     minHeight: 34,
+    fontFamily: Fonts.body,
     fontSize: 16,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
@@ -133,14 +134,12 @@ const styles = StyleSheet.create({
     width: 34,
     height: 34,
     borderRadius: 17,
-    backgroundColor: Accent,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sendGlyph: {
-    color: '#ffffff',
     fontSize: 18,
-    fontWeight: '700',
+    fontFamily: Fonts.bodyBold,
     lineHeight: 20,
   },
 });

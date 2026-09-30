@@ -3,7 +3,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Accent, Spacing } from '@/constants/theme';
+import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export type PrimingVariant = 'foreground' | 'background' | 'denied';
@@ -42,7 +42,7 @@ export function LocationPrimingSheet({ visible, variant, onAllow, onDismiss }: P
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onDismiss}>
-      <View style={styles.backdrop}>
+      <View style={[styles.backdrop, { backgroundColor: theme.scrim }]}>
         <ThemedView style={styles.sheet}>
           <SafeAreaView edges={['bottom']}>
             <View style={styles.content}>
@@ -59,8 +59,13 @@ export function LocationPrimingSheet({ visible, variant, onAllow, onDismiss }: P
 
               <Pressable
                 onPress={onAllow}
-                style={({ pressed }) => [styles.primary, { opacity: pressed ? 0.85 : 1 }]}>
-                <ThemedText type="default" style={styles.primaryLabel}>
+                style={({ pressed }) => [
+                  styles.primary,
+                  { backgroundColor: theme.primary, opacity: pressed ? 0.85 : 1 },
+                ]}>
+                <ThemedText
+                  type="default"
+                  style={[styles.primaryLabel, { color: theme.onPrimary }]}>
                   {copy.cta}
                 </ThemedText>
               </Pressable>
@@ -82,7 +87,6 @@ const styles = StyleSheet.create({
   backdrop: {
     flex: 1,
     justifyContent: 'flex-end',
-    backgroundColor: 'rgba(0,0,0,0.4)',
   },
   sheet: {
     borderTopLeftRadius: Spacing.five,
@@ -115,15 +119,13 @@ const styles = StyleSheet.create({
   },
   primary: {
     alignSelf: 'stretch',
-    backgroundColor: Accent,
     paddingVertical: Spacing.three - 2,
-    borderRadius: Spacing.two,
+    borderRadius: Radius.medium,
     alignItems: 'center',
     marginTop: Spacing.two,
   },
   primaryLabel: {
-    color: '#ffffff',
-    fontWeight: '600',
+    fontFamily: Fonts.bodyBold,
   },
   secondary: {
     paddingVertical: Spacing.two,

@@ -3,6 +3,8 @@
   "main": "expo-router/entry",
   "version": "1.0.0",
   "dependencies": {
+    "@expo-google-fonts/zen-kaku-gothic-new": "^0.4.1",
+    "@expo-google-fonts/zen-old-mincho": "^0.4.1",
     "@expo/ui": "~57.0.14",
     "@supabase/supabase-js": "^2.116.0",
     "expo": "~57.0.18",

@@ -6,7 +6,7 @@ import { GlassPanel } from '@/components/glass-panel';
 import { MapCanvas } from '@/components/map-canvas';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Accent, Spacing } from '@/constants/theme';
+import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { DEFAULT_POSITION } from '@/data/places';
 import { useTheme } from '@/hooks/use-theme';
 import { distanceMeters, formatDistance } from '@/lib/geo';
@@ -58,7 +58,7 @@ export default function MapScreen() {
 
       <GlassPanel variant="regular" style={styles.sheet}>
         <SafeAreaView edges={['bottom']}>
-          <View style={styles.handle} />
+          <View style={[styles.handle, { backgroundColor: theme.border }]} />
           <ScrollView style={styles.sheetScroll} contentContainerStyle={styles.sheetContent}>
             {pins.length === 0 ? (
               inboxState === 'loading' || inboxState === 'idle' ? (
@@ -87,7 +87,9 @@ export default function MapScreen() {
                       {fence.label}
                     </ThemedText>
                   </View>
-                  <ThemedText type="small" style={styles.rowDistance}>
+                  <ThemedText
+                    type="small"
+                    style={[styles.rowDistance, { color: theme.accentText }]}>
                     {formatDistance(distance)}
                   </ThemedText>
                 </Pressable>
@@ -140,7 +142,6 @@ const styles = StyleSheet.create({
     width: 36,
     height: 4,
     borderRadius: 2,
-    backgroundColor: 'rgba(128,128,128,0.5)',
     marginTop: Spacing.two,
   },
   sheetScroll: {
@@ -156,7 +157,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: Spacing.three,
     padding: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.large,
   },
   rowGlyph: {
     fontSize: 20,
@@ -165,8 +166,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   rowDistance: {
-    color: Accent,
-    fontWeight: '600',
+    fontFamily: Fonts.bodyBold,
   },
   loading: {
     paddingTop: Spacing.four,

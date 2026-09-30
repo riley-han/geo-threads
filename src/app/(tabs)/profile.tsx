@@ -11,11 +11,12 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AppearancePicker } from '@/components/appearance-picker';
 import { AvatarDot } from '@/components/avatar-dot';
 import { FriendRow } from '@/components/friend-row';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
-import { Accent, BottomTabInset, Spacing } from '@/constants/theme';
+import { BottomTabInset, Fonts, Radius, Spacing } from '@/constants/theme';
 import type { Person } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { openSystemSettings } from '@/lib/location-permissions';
@@ -30,11 +31,6 @@ import {
   useSocialActions,
   useSocialState,
 } from '@/store/social-store';
-
-/** Matches the error red already used in login.tsx and address-search.tsx.
- *  Declared here rather than in the StyleSheet because ActivityIndicator needs
- *  the value as a prop. */
-const SIGN_OUT_RED = '#ef6f6c';
 
 const ACCESS_COPY = {
   none: { label: 'Not enabled', detail: 'Messages tied to a place stay locked.' },
@@ -82,10 +78,7 @@ export default function ProfileScreen() {
       return;
     }
     if (!/^[a-z0-9_]{3,30}$/.test(handle)) {
-      Alert.alert(
-        'That handle will not work',
-        'Use 3 to 30 letters, numbers or underscores.',
-      );
+      Alert.alert('That handle will not work', 'Use 3 to 30 letters, numbers or underscores.');
       return;
     }
 
@@ -151,64 +144,65 @@ export default function ProfileScreen() {
               <ActivityIndicator style={styles.accountLoading} />
             ) : (
               <>
-            <AvatarDot id={profile.id} name={profile.name} size={72} />
-            {editing ? (
-              <View style={styles.editFields}>
-                <TextInput
-                  value={draftName}
-                  onChangeText={setDraftName}
-                  placeholder="Your name"
-                  placeholderTextColor={theme.textSecondary}
-                  style={[
-                    styles.input,
-                    { color: theme.text, backgroundColor: theme.backgroundSelected },
-                  ]}
-                />
-                <TextInput
-                  value={draftHandle}
-                  onChangeText={setDraftHandle}
-                  placeholder="@handle"
-                  placeholderTextColor={theme.textSecondary}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  style={[
-                    styles.input,
-                    { color: theme.text, backgroundColor: theme.backgroundSelected },
-                  ]}
-                />
-                <View style={styles.editActions}>
-                  <Pressable onPress={() => setEditing(false)} hitSlop={8}>
+                <AvatarDot id={profile.id} name={profile.name} size={72} />
+                {editing ? (
+                  <View style={styles.editFields}>
+                    <TextInput
+                      value={draftName}
+                      onChangeText={setDraftName}
+                      placeholder="Your name"
+                      placeholderTextColor={theme.textSecondary}
+                      style={[
+                        styles.input,
+                        { color: theme.text, backgroundColor: theme.backgroundSelected },
+                      ]}
+                    />
+                    <TextInput
+                      value={draftHandle}
+                      onChangeText={setDraftHandle}
+                      placeholder="@handle"
+                      placeholderTextColor={theme.textSecondary}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      style={[
+                        styles.input,
+                        { color: theme.text, backgroundColor: theme.backgroundSelected },
+                      ]}
+                    />
+                    <View style={styles.editActions}>
+                      <Pressable onPress={() => setEditing(false)} hitSlop={8}>
+                        <ThemedText type="small" themeColor="textSecondary">
+                          Cancel
+                        </ThemedText>
+                      </Pressable>
+                      <Pressable onPress={() => void saveEdit()} disabled={saving} hitSlop={8}>
+                        <ThemedText type="linkPrimary">{saving ? 'Saving…' : 'Save'}</ThemedText>
+                      </Pressable>
+                    </View>
+                  </View>
+                ) : (
+                  <>
+                    <ThemedText type="subtitle">{profile.name}</ThemedText>
                     <ThemedText type="small" themeColor="textSecondary">
-                      Cancel
+                      @{profile.handle}
                     </ThemedText>
-                  </Pressable>
-                  <Pressable onPress={() => void saveEdit()} disabled={saving} hitSlop={8}>
-                    <ThemedText type="linkPrimary" style={styles.save}>
-                      {saving ? 'Saving…' : 'Save'}
-                    </ThemedText>
-                  </Pressable>
-                </View>
-              </View>
-            ) : (
-              <>
-                <ThemedText type="subtitle" style={styles.name}>
-                  {profile.name}
-                </ThemedText>
-                <ThemedText type="small" themeColor="textSecondary">
-                  @{profile.handle}
-                </ThemedText>
-                <Pressable onPress={beginEdit} hitSlop={8}>
-                  <ThemedText type="linkPrimary">Edit profile</ThemedText>
-                </Pressable>
-              </>
-            )}
+                    <Pressable onPress={beginEdit} hitSlop={8}>
+                      <ThemedText type="linkPrimary">Edit profile</ThemedText>
+                    </Pressable>
+                  </>
+                )}
               </>
             )}
           </View>
         </SafeAreaView>
 
         <View style={styles.section}>
-          <ThemedText type="smallBold">Location</ThemedText>
+          <ThemedText type="heading">Appearance</ThemedText>
+          <AppearancePicker />
+        </View>
+
+        <View style={styles.section}>
+          <ThemedText type="heading">Location</ThemedText>
           <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
             <ThemedText type="default">{accessCopy.label}</ThemedText>
             <ThemedText type="small" themeColor="textSecondary">
@@ -216,24 +210,36 @@ export default function ProfileScreen() {
             </ThemedText>
 
             {access === 'none' ? (
-              <Pressable onPress={() => void requestForeground()} style={styles.cardButton}>
-                <ThemedText type="small" style={styles.cardButtonText}>
+              <Pressable
+                onPress={() => void requestForeground()}
+                style={[styles.cardButton, { backgroundColor: theme.primary }]}>
+                <ThemedText
+                  type="small"
+                  style={[styles.cardButtonText, { color: theme.onPrimary }]}>
                   Enable location
                 </ThemedText>
               </Pressable>
             ) : null}
 
             {access === 'foreground' ? (
-              <Pressable onPress={() => void enableArrivalAlerts()} style={styles.cardButton}>
-                <ThemedText type="small" style={styles.cardButtonText}>
+              <Pressable
+                onPress={() => void enableArrivalAlerts()}
+                style={[styles.cardButton, { backgroundColor: theme.primary }]}>
+                <ThemedText
+                  type="small"
+                  style={[styles.cardButtonText, { color: theme.onPrimary }]}>
                   Turn on arrival alerts
                 </ThemedText>
               </Pressable>
             ) : null}
 
             {access === 'denied' ? (
-              <Pressable onPress={openSystemSettings} style={styles.cardButton}>
-                <ThemedText type="small" style={styles.cardButtonText}>
+              <Pressable
+                onPress={openSystemSettings}
+                style={[styles.cardButton, { backgroundColor: theme.primary }]}>
+                <ThemedText
+                  type="small"
+                  style={[styles.cardButtonText, { color: theme.onPrimary }]}>
                   Open Settings
                 </ThemedText>
               </Pressable>
@@ -243,7 +249,7 @@ export default function ProfileScreen() {
 
         {requests.length > 0 ? (
           <View style={styles.section}>
-            <ThemedText type="smallBold">Requests</ThemedText>
+            <ThemedText type="heading">Requests</ThemedText>
             {requests.map((c) => (
               <FriendRow
                 key={c.id}
@@ -261,7 +267,7 @@ export default function ProfileScreen() {
 
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
-            <ThemedText type="smallBold">Friends · {friends.length}</ThemedText>
+            <ThemedText type="heading">Friends · {friends.length}</ThemedText>
             <Pressable onPress={() => router.push('/people')} hitSlop={8}>
               <ThemedText type="linkPrimary">Find people</ThemedText>
             </Pressable>
@@ -302,9 +308,9 @@ export default function ProfileScreen() {
             },
           ]}>
           {signingOut ? (
-            <ActivityIndicator color={SIGN_OUT_RED} />
+            <ActivityIndicator color={theme.danger} />
           ) : (
-            <ThemedText type="default" style={styles.signOutLabel}>
+            <ThemedText type="defaultBold" themeColor="danger">
               Sign out
             </ThemedText>
           )}
@@ -334,27 +340,21 @@ const styles = StyleSheet.create({
     gap: Spacing.two,
     paddingVertical: Spacing.four,
   },
-  name: {
-    fontSize: 26,
-    lineHeight: 32,
-  },
   editFields: {
     alignSelf: 'stretch',
     gap: Spacing.two,
   },
   input: {
+    fontFamily: Fonts.body,
     fontSize: 16,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two + 2,
-    borderRadius: Spacing.two,
+    borderRadius: Radius.medium,
   },
   editActions: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.one,
-  },
-  save: {
-    fontWeight: '700',
   },
   section: {
     gap: Spacing.two,
@@ -366,30 +366,24 @@ const styles = StyleSheet.create({
   },
   card: {
     padding: Spacing.three,
-    borderRadius: Spacing.three,
+    borderRadius: Radius.large,
     gap: Spacing.one,
   },
   cardButton: {
     alignSelf: 'flex-start',
     marginTop: Spacing.two,
-    backgroundColor: Accent,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.two,
     borderRadius: 999,
   },
   cardButtonText: {
-    color: '#ffffff',
-    fontWeight: '600',
+    fontFamily: Fonts.bodyBold,
   },
   signOutButton: {
     paddingVertical: Spacing.three - 2,
-    borderRadius: Spacing.two,
+    borderRadius: Radius.medium,
     alignItems: 'center',
     justifyContent: 'center',
     minHeight: 44,
-  },
-  signOutLabel: {
-    color: SIGN_OUT_RED,
-    fontWeight: '600',
   },
 });
