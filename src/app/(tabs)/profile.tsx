@@ -1,11 +1,12 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   TextInput,
   View,
 } from 'react-native';
@@ -20,7 +21,8 @@ import { BottomTabInset, Fonts, Radius, Spacing } from '@/constants/theme';
 import type { Person } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { openSystemSettings } from '@/lib/location-permissions';
-import { requestNotificationAccess } from '@/lib/notifications';
+import { notificationAccess, requestNotificationAccess } from '@/lib/notifications';
+import { registerPushToken } from '@/lib/push';
 import { useAuth } from '@/store/auth-store';
 import { useLocation } from '@/store/location-store';
 import { useMessageActions } from '@/store/messages-store';
@@ -57,6 +59,37 @@ export default function ProfileScreen() {
   const [draftName, setDraftName] = useState('');
   const [draftHandle, setDraftHandle] = useState('');
   const [saving, setSaving] = useState(false);
+  const [notifications, setNotifications] = useState<'granted' | 'off' | 'blocked' | null>(null);
+  const [savingReceipts, setSavingReceipts] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void notificationAccess().then((access) => {
+      if (active) setNotifications(access);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const enableNotifications = async () => {
+    // Once refused, iOS will not prompt again; Settings is the only way back.
+    if (notifications === 'blocked') {
+      openSystemSettings();
+      return;
+    }
+    const granted = await requestNotificationAccess();
+    if (granted) void registerPushToken();
+    setNotifications(await notificationAccess());
+  };
+
+  const setShareReceipts = async (value: boolean) => {
+    if (savingReceipts) return;
+    setSavingReceipts(true);
+    const { error } = await updateProfile({ shareUnlockReceipts: value });
+    setSavingReceipts(false);
+    if (error) Alert.alert('Could not save', error);
+  };
 
   const beginEdit = () => {
     setDraftName(profile?.name ?? '');
@@ -96,7 +129,11 @@ export default function ProfileScreen() {
 
   const enableArrivalAlerts = async () => {
     const granted = await requestNotificationAccess();
-    if (granted) await requestBackground();
+    if (granted) {
+      setNotifications('granted');
+      void registerPushToken();
+      await requestBackground();
+    }
   };
 
   const [opening, setOpening] = useState<string | null>(null);
@@ -247,6 +284,49 @@ export default function ProfileScreen() {
           </View>
         </View>
 
+        <View style={styles.section}>
+          <ThemedText type="heading">Notifications</ThemedText>
+          <View style={[styles.card, { backgroundColor: theme.backgroundElement }]}>
+            <ThemedText type="default">
+              {notifications === 'granted' ? 'On' : notifications ? 'Off' : ' '}
+            </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {notifications === 'granted'
+                ? 'You hear about new messages and when friends find yours.'
+                : 'Hear about new messages and when friends find yours, even when the app is closed.'}
+            </ThemedText>
+
+            {notifications === 'off' || notifications === 'blocked' ? (
+              <Pressable
+                onPress={() => void enableNotifications()}
+                style={[styles.cardButton, { backgroundColor: theme.primary }]}>
+                <ThemedText
+                  type="small"
+                  style={[styles.cardButtonText, { color: theme.onPrimary }]}>
+                  {notifications === 'blocked' ? 'Open Settings' : 'Turn on notifications'}
+                </ThemedText>
+              </Pressable>
+            ) : null}
+          </View>
+
+          <View
+            style={[styles.card, styles.toggleRow, { backgroundColor: theme.backgroundElement }]}>
+            <View style={styles.toggleText}>
+              <ThemedText type="default">Let senders know when I find their messages</ThemedText>
+              <ThemedText type="small" themeColor="textSecondary">
+                They see that you found it and when, to the minute. Never where you are now.
+              </ThemedText>
+            </View>
+            <Switch
+              value={profile?.share_unlock_receipts ?? true}
+              onValueChange={(v) => void setShareReceipts(v)}
+              disabled={profile == null || savingReceipts}
+              trackColor={{ true: theme.primary, false: theme.backgroundSelected }}
+              accessibilityLabel="Let senders know when I find their messages"
+            />
+          </View>
+        </View>
+
         {requests.length > 0 ? (
           <View style={styles.section}>
             <ThemedText type="heading">Requests</ThemedText>
@@ -367,6 +447,15 @@ const styles = StyleSheet.create({
   card: {
     padding: Spacing.three,
     borderRadius: Radius.large,
+    gap: Spacing.one,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+  },
+  toggleText: {
+    flex: 1,
     gap: Spacing.one,
   },
   cardButton: {

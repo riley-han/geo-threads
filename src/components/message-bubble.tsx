@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { FenceBadge } from '@/components/fence-chip';
+import { FoundReceipt } from '@/components/found-receipt';
 import { GlassPanel } from '@/components/glass-panel';
 import { ThemedText } from '@/components/themed-text';
 import { Fonts, Spacing } from '@/constants/theme';
@@ -16,6 +17,8 @@ type Props = {
   isMine: boolean;
   isLastInRun: boolean;
   showSender: boolean;
+  /** Everyone in the thread but you; sizes the "Found by N of M" receipt. */
+  recipientCount: number;
   /** Offer the background/notification opt-in from a locked bubble. */
   onRequestArrivalAlerts?: () => void;
 };
@@ -25,6 +28,7 @@ export function MessageBubble({
   isMine,
   isLastInRun,
   showSender,
+  recipientCount,
   onRequestArrivalAlerts,
 }: Props) {
   const theme = useTheme();
@@ -104,6 +108,10 @@ export function MessageBubble({
           {fence ? <FenceBadge fence={fence} tone={isMine ? 'onPrimary' : 'muted'} /> : null}
         </View>
       )}
+
+      {isMine && fence && message.status === 'sent' ? (
+        <FoundReceipt foundBy={message.foundBy} recipientCount={recipientCount} />
+      ) : null}
     </View>
   );
 }

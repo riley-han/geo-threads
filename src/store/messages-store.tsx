@@ -14,7 +14,7 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import * as repo from '@/data/repository';
 import { conversationTitle } from '@/data/repository';
-import type { Conversation, Message } from '@/data/types';
+import type { Conversation, Message, Person } from '@/data/types';
 import { fenceKey } from '@/data/types';
 import { clearMirror, mirrorOwner, replaceMirror, type MirroredMessage } from '@/db/fence-mirror';
 import type { Geofence } from '@/lib/geo';
@@ -65,6 +65,12 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<Map<string, Entry>>(new Map());
 
   const inFlight = useRef(new Set<string>());
+  // Read by the realtime and foreground handlers, which must not resubscribe
+  // every time a message lands.
+  const entriesRef = useRef(entries);
+  useEffect(() => {
+    entriesRef.current = entries;
+  }, [entries]);
 
   /**
    * The single place `pendingFenced` is assigned, so the SQLite mirror the
@@ -155,16 +161,6 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     };
   }, [myId, applyInbox]);
 
-  // Realtime lands in PR 3. Until then, refetching when the app comes forward
-  // is what keeps a thread from going stale.
-  useEffect(() => {
-    const onChange = (state: AppStateStatus) => {
-      if (state === 'active') void loadInbox();
-    };
-    const sub = AppState.addEventListener('change', onChange);
-    return () => sub.remove();
-  }, [loadInbox]);
-
   const loadMessages = useCallback(
     async (conversationId: string) => {
       if (!myId || inFlight.current.has(conversationId)) return;
@@ -194,6 +190,21 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     [myId],
   );
 
+  // Realtime only delivers while the socket is up, so anything that landed
+  // while the app was backgrounded — including the message a push was about —
+  // is picked up here: the inbox, plus every thread already on screen or cached.
+  useEffect(() => {
+    const onChange = (state: AppStateStatus) => {
+      if (state !== 'active') return;
+      void loadInbox();
+      for (const [cid, entry] of entriesRef.current) {
+        if (entry.state === 'ready' || entry.state === 'error') void loadMessages(cid);
+      }
+    };
+    const sub = AppState.addEventListener('change', onChange);
+    return () => sub.remove();
+  }, [loadInbox, loadMessages]);
+
   const entryFor = useCallback(
     (conversationId: string) => entries.get(conversationId) ?? EMPTY_ENTRY,
     [entries],
@@ -214,12 +225,99 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  /** Applies `update` to one message wherever it is cached. */
+  const patchMessage = useCallback(
+    (messageId: string, update: (m: Message) => Message) => {
+      setEntries((prev) => {
+        let changed = false;
+        const next = new Map(prev);
+        for (const [cid, entry] of next) {
+          if (!entry.messages.some((m) => m.id === messageId)) continue;
+          changed = true;
+          next.set(cid, {
+            ...entry,
+            messages: entry.messages.map((m) => (m.id === messageId ? update(m) : m)),
+          });
+        }
+        return changed ? next : prev;
+      });
+    },
+    [],
+  );
+
+  // Live updates. RLS applies to realtime, so this receives new messages in
+  // your threads, your own unlocks, and receipts for your messages from
+  // finders who share them — nothing else.
+  const onRemoteMessage = useCallback(
+    async (row: Record<string, unknown>) => {
+      if (!myId) return;
+      const conversationId = row.conversation_id as string;
+      const entry = entriesRef.current.get(conversationId);
+
+      // Only splice into a thread already fetched in full. Inserting into an
+      // idle one would mark it loaded with a single message in it.
+      if (entry && entry.state === 'ready') {
+        const sender = await repo.fetchProfile(row.sender_id as string);
+        if (sender) {
+          const incoming = repo.messageFromRealtimeRow(row, sender, myId);
+          const known = entry.messages.find((m) => m.id === incoming.id);
+          // Our own send already upserted the real row; keep its local state.
+          upsertMessage(known ? { ...incoming, unlockedAt: known.unlockedAt, foundBy: known.foundBy } : incoming);
+        }
+      }
+      // Previews, unread state and pendingFenced (and so the geofences).
+      void loadInbox();
+    },
+    [myId, upsertMessage, loadInbox],
+  );
+
+  const onRemoteUnlock = useCallback(
+    async (row: Record<string, unknown>) => {
+      if (!myId) return;
+      const messageId = row.message_id as string;
+      const finderId = row.user_id as string;
+      const at = repo.toEpochMs(row.unlocked_at as string) ?? Date.now();
+
+      if (finderId === myId) {
+        // This account unlocked it, possibly on another device.
+        patchMessage(messageId, (m) => (m.unlockedAt == null ? { ...m, unlockedAt: at } : m));
+        void loadInbox();
+        return;
+      }
+
+      const finder: Person | null = await repo.fetchProfile(finderId);
+      if (!finder) return;
+      patchMessage(messageId, (m) =>
+        !m.isMine || m.foundBy.some((f) => f.person.id === finderId)
+          ? m
+          : { ...m, foundBy: [...m.foundBy, { person: finder, at }].sort((a, b) => a.at - b.at) },
+      );
+    },
+    [myId, patchMessage, loadInbox],
+  );
+
+  // Handlers go through a ref so the channel subscribes once per account rather
+  // than on every render that changes a callback's identity.
+  const realtimeHandlers = useRef({ onRemoteMessage, onRemoteUnlock });
+  useEffect(() => {
+    realtimeHandlers.current = { onRemoteMessage, onRemoteUnlock };
+  }, [onRemoteMessage, onRemoteUnlock]);
+
+  // The provider is keyed by user id, so switching account tears this down.
+  useEffect(() => {
+    if (!myId) return;
+    return repo.subscribeToMessageEvents(myId, {
+      onMessage: (row) => void realtimeHandlers.current.onRemoteMessage(row),
+      onUnlock: (row) => void realtimeHandlers.current.onRemoteUnlock(row),
+    });
+  }, [myId]);
+
   const sendMessage = useCallback(
     async (conversationId: string, body: string, fence?: Geofence): Promise<SendResult> => {
       if (!myId || !user) return { error: 'Not signed in.' };
 
-      // Generated here so the optimistic row, the inserted row and (in PR 3)
-      // the realtime echo all share one identity — every path is then an
+      // Generated here so the optimistic row, the inserted row and the
+      // realtime echo all share one identity — every path is then an
       // idempotent upsert by id rather than a guess at which rows match.
       const id = Crypto.randomUUID();
       const me = meAsPerson(myId, user.email ?? null);
@@ -233,6 +331,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         sentAt: Date.now(),
         fence,
         unlockedAt: null,
+        foundBy: [],
         status: 'sending',
       });
 

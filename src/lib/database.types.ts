@@ -218,6 +218,7 @@ export type Database = {
           handle: string
           id: string
           name: string
+          share_unlock_receipts: boolean
           updated_at: string
         }
         Insert: {
@@ -226,6 +227,7 @@ export type Database = {
           handle: string
           id: string
           name: string
+          share_unlock_receipts?: boolean
           updated_at?: string
         }
         Update: {
@@ -234,9 +236,39 @@ export type Database = {
           handle?: string
           id?: string
           name?: string
+          share_unlock_receipts?: boolean
           updated_at?: string
         }
         Relationships: []
+      }
+      push_tokens: {
+        Row: {
+          platform: string
+          token: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          platform: string
+          token: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          platform?: string
+          token?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_tokens_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
@@ -246,6 +278,10 @@ export type Database = {
       create_conversation: {
         Args: { p_participant_ids: string[]; p_title?: string }
         Returns: string
+      }
+      register_push_token: {
+        Args: { p_platform: string; p_token: string }
+        Returns: undefined
       }
     }
     Enums: {

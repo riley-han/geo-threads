@@ -185,6 +185,96 @@ That is why the policies on `conversations`, `conversation_participants` and
 `messages` each carry an explicit "or it is mine" arm. They are not redundant.
 `npm run db:test` covers this path.
 
+### Unlock receipts
+
+`message_unlocks` is per-reader, but since Found It it is not private to the
+reader: the **sender** of a message may read its unlock rows, as long as the
+finder has `profiles.share_unlock_receipts` on (the default). Other people in a
+group thread still see nothing. The check is the definer predicate
+`private.can_read_unlock_receipt`, so turning the setting off hides your rows in
+RLS, not just in the UI.
+
+Two consequences for the client:
+
+- The `unlocks` embed on a message can now hold other people's rows, so the
+  mapper picks the viewer's own unlock by `user_id` rather than taking `[0]`.
+- `unlocked_at` is set by trigger to the server clock, truncated to the minute.
+  A receipt says which message was found, never a precise moment.
+
+## Push
+
+Remote push has three parts: devices register an Expo push token in
+`push_tokens` (through the `register_push_token` RPC), two Database Webhooks
+fire on inserts, and the `push` Edge Function (`supabase/functions/push`)
+sends through the Expo Push API.
+
+### 1. Deploy the function and its secret
+
+```bash
+npx supabase functions deploy push
+npx supabase secrets set PUSH_WEBHOOK_SECRET=<a long random string>
+```
+
+`openssl rand -hex 32` makes a good secret. The function is deployed with
+`verify_jwt = false` (see `config.toml`) because webhooks carry no user JWT; it
+checks the `x-webhook-secret` header against this secret instead and returns
+401 otherwise.
+
+Optional: if you turn on **Enhanced push security** for the project on
+expo.dev, also set `EXPO_ACCESS_TOKEN`.
+
+### 2. Create the two webhooks
+
+In the dashboard, under **Database → Webhooks**, create:
+
+| Name | Table | Events |
+| --- | --- | --- |
+| `push-on-message` | `public.messages` | Insert |
+| `push-on-unlock` | `public.message_unlocks` | Insert |
+
+For both, choose **Supabase Edge Functions**, select `push` and method `POST`,
+then add an HTTP header `x-webhook-secret` with the same value as above.
+
+These are not in a migration on purpose: they need the project URL and the
+secret, and neither belongs in version control.
+
+### What gets sent
+
+| Event | Who | Copy |
+| --- | --- | --- |
+| New open message | every other participant | sender, then a 140-character preview |
+| New fenced message | every other participant | "Left you a message at {place}". The body is **never** included. |
+| Unlock | the message's sender, if the finder shares receipts | "{name} found your message at {place}" |
+
+Message pushes go only to recipients and unlock pushes only to senders, so
+neither duplicates the finder's local arrival alert. Tokens that Expo reports as
+`DeviceNotRegistered` are deleted.
+
+Check the delivery logs under **Edge Functions → push → Logs** in the dashboard.
+
+### 3. EAS (the app side)
+
+The app cannot get a push token until it belongs to an EAS project.
+`registerPushToken` in `src/lib/push.ts` quietly does nothing until then.
+
+1. `npm install --global eas-cli`. If `eas init` errored with "command not
+   found", this was the cause.
+2. `eas login`, then `eas init`. This writes `extra.eas.projectId` and `owner`
+   into `app.json`. Commit that change.
+3. Change `ios.bundleIdentifier` and `android.package` away from
+   `com.anonymous.geothreads` to an identifier you own. APNs and FCM
+   credentials are tied to it.
+4. Run `eas build:configure` to create `eas.json`.
+5. **iOS:** run `eas credentials`, choose iOS, and set up a **Push Notifications
+   key**. This needs a paid Apple Developer account.
+6. **Android:** create a Firebase project, download `google-services.json`, set
+   `android.googleServicesFile` in `app.json`, and upload the FCM V1
+   service-account key with `eas credentials`.
+7. Build a dev client with `eas build --profile development`, or run
+   `npx expo run:ios --device`. Push needs a development build. On Android it
+   does not work in Expo Go. On iOS it works on simulators only with Xcode 14+,
+   and a real device is the reliable test.
+
 ## Still to do
 
 - **Google / OAuth sign-in.** The button on the login screen says it is not set

@@ -1,4 +1,4 @@
-import type { Conversation, Message, Person } from '@/data/types';
+import type { Conversation, FoundBy, Message, Person } from '@/data/types';
 import type { Geofence } from '@/lib/geo';
 
 /**
@@ -25,7 +25,13 @@ export type MessageRowWithRefs = {
   fence_label: string | null;
   fence_key?: string | null;
   sender: ProfileFields | null;
-  unlocks: { unlocked_at: string }[] | null;
+  unlocks: UnlockRowWithFinder[] | null;
+};
+
+export type UnlockRowWithFinder = {
+  user_id: string;
+  unlocked_at: string;
+  finder: ProfileFields | null;
 };
 
 export type ConversationRowWithRefs = {
@@ -87,19 +93,34 @@ function toFence(row: MessageRowWithRefs): Geofence | undefined {
 }
 
 export function toMessage(row: MessageRowWithRefs, myId: string): Message {
+  const isMine = row.sender_id === myId;
+  const unlocks = row.unlocks ?? [];
+
   return {
     id: row.id,
     conversationId: row.conversation_id,
     sender: row.sender ? toPerson(row.sender) : unknownPerson(row.sender_id),
-    isMine: row.sender_id === myId,
+    isMine,
     body: row.body,
     sentAt: toEpochMs(row.sent_at) ?? Date.now(),
     fence: toFence(row),
-    // RLS scopes message_unlocks to the caller, so this array can only ever
-    // hold this viewer's row.
-    unlockedAt: toEpochMs(row.unlocks?.[0]?.unlocked_at),
+    // Not unlocks[0]: on your own message RLS also returns the finders' rows
+    // (receipts), so this viewer's unlock has to be picked out by id.
+    unlockedAt: toEpochMs(unlocks.find((u) => u.user_id === myId)?.unlocked_at),
+    foundBy: isMine ? toFoundBy(unlocks, myId) : [],
     status: 'sent',
   };
+}
+
+/** Receipts on your own message: everyone but you, oldest first. */
+export function toFoundBy(unlocks: UnlockRowWithFinder[], myId: string): FoundBy[] {
+  return unlocks
+    .filter((u) => u.user_id !== myId)
+    .map((u) => ({
+      person: u.finder ? toPerson(u.finder) : unknownPerson(u.user_id),
+      at: toEpochMs(u.unlocked_at) ?? 0,
+    }))
+    .sort((a, b) => a.at - b.at);
 }
 
 export function toConversation(row: ConversationRowWithRefs, myId: string): Conversation {

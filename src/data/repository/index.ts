@@ -21,8 +21,11 @@ export {
   fetchMessages,
   fetchPendingFenced,
   messageFromRealtimeRow,
+  subscribeToMessageEvents,
   unlockMessage,
 } from './messages';
+
+export { deletePushToken, savePushToken } from './push';
 
 export { fetchProfile, searchProfiles } from './profiles';
 
