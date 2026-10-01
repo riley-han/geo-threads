@@ -25,6 +25,7 @@ import { isInsideFence, type Geofence } from '@/lib/geo';
 import { openSystemSettings } from '@/lib/location-permissions';
 import { messageVisibility } from '@/lib/message-visibility';
 import { requestNotificationAccess } from '@/lib/notifications';
+import { registerPushToken } from '@/lib/push';
 import { useLocation } from '@/store/location-store';
 import {
   conversationTitle,
@@ -96,7 +97,10 @@ export default function ConversationScreen() {
     if (variant === 'denied') openSystemSettings();
     if (variant === 'background') {
       const granted = await requestNotificationAccess();
-      if (granted) await requestBackground();
+      if (granted) {
+        void registerPushToken();
+        await requestBackground();
+      }
     }
   };
 
@@ -157,6 +161,7 @@ export default function ConversationScreen() {
         isMine={isMine}
         isLastInRun={isLastInRun}
         showSender={showSender}
+        recipientCount={participants.length}
         onRequestArrivalAlerts={
           access === 'foreground' ? () => setManualPriming('background') : undefined
         }

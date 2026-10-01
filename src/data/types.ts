@@ -31,9 +31,18 @@ export type Message = {
    * from `message_unlocks`, not from a column on the message.
    */
   unlockedAt: number | null;
+  /**
+   * Who has found this message, oldest first. Only ever filled on your own
+   * fenced messages: RLS lets a sender read unlocks of their message, and only
+   * for finders who share receipts (profiles.share_unlock_receipts).
+   */
+  foundBy: FoundBy[];
   /** 'sending' until the insert lands, so an optimistic row is distinguishable. */
   status: 'sent' | 'sending' | 'failed';
 };
+
+/** One receipt: a finder and when they unlocked, epoch ms (minute precision). */
+export type FoundBy = { person: Person; at: number };
 
 export type Conversation = {
   id: string;

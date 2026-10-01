@@ -15,6 +15,14 @@ import { startAutoRefreshWithAppState, supabase } from '@/lib/supabase';
 
 export type AuthResult = { error: string | null };
 
+/** The profile fields the signed-in user may change. Omitted fields are left alone. */
+export type ProfilePatch = {
+  name?: string;
+  handle?: string;
+  /** "Let senders know when I find their messages". Enforced in RLS. */
+  shareUnlockReceipts?: boolean;
+};
+
 type AuthApi = {
   session: Session | null;
   user: User | null;
@@ -28,7 +36,7 @@ type AuthApi = {
   >;
   signOut: () => Promise<AuthResult>;
   sendPasswordReset: (email: string) => Promise<AuthResult>;
-  updateProfile: (patch: Pick<ProfileRow, 'name'> & { handle?: string }) => Promise<AuthResult>;
+  updateProfile: (patch: ProfilePatch) => Promise<AuthResult>;
   refreshProfile: () => Promise<void>;
 };
 
@@ -158,7 +166,13 @@ export function AuthProvider({
         if (!userId) return { error: 'Not signed in.' };
         const { data, error } = await supabase
           .from('profiles')
-          .update({ name: patch.name, ...(patch.handle ? { handle: patch.handle } : {}) })
+          .update({
+            ...(patch.name ? { name: patch.name } : {}),
+            ...(patch.handle ? { handle: patch.handle } : {}),
+            ...(patch.shareUnlockReceipts != null
+              ? { share_unlock_receipts: patch.shareUnlockReceipts }
+              : {}),
+          })
           .eq('id', userId)
           .select()
           .single();

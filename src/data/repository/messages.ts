@@ -8,14 +8,19 @@ import { toMessage, type MessageRowWithRefs } from './mappers';
 /**
  * The sender profile is embedded so no call site has to resolve an id to a
  * name, and `unlocks` comes along so per-viewer unlock state arrives in the
- * same round trip. The FK hint on `sender` is required: `messages` and
- * `message_unlocks` both reference `profiles`, so PostgREST cannot infer it.
+ * same round trip. On your own messages `unlocks` also holds the receipts of
+ * finders who share them, which is why it carries `user_id` and the finder's
+ * profile. The FK hints are required: `messages` and `message_unlocks` both
+ * reference `profiles`, so PostgREST cannot infer either join.
  */
 const MESSAGE_SELECT = `
   id, conversation_id, sender_id, body, sent_at,
   fence_latitude, fence_longitude, fence_radius_meters, fence_label, fence_key,
   sender:profiles!messages_sender_id_fkey ( id, name, handle, avatar_url ),
-  unlocks:message_unlocks ( unlocked_at )
+  unlocks:message_unlocks (
+    user_id, unlocked_at,
+    finder:profiles!message_unlocks_user_id_fkey ( id, name, handle, avatar_url )
+  )
 `;
 
 export async function fetchMessages(
@@ -115,6 +120,35 @@ export async function unlockMessage(
 
   if (error) return { unlockedAt: now, error: describeError(error) };
   return { unlockedAt: now, error: null };
+}
+
+/**
+ * Live inserts on `messages` and `message_unlocks`. RLS applies to realtime, so
+ * this only delivers messages in your threads, your own unlocks, and receipts
+ * for your messages from finders who share them. Returns the unsubscribe.
+ *
+ * Rows arrive raw: no embedded sender or finder profile.
+ */
+export function subscribeToMessageEvents(
+  myId: string,
+  handlers: {
+    onMessage: (row: Record<string, unknown>) => void;
+    onUnlock: (row: Record<string, unknown>) => void;
+  },
+): () => void {
+  const channel = supabase
+    .channel(`messages:${myId}`)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, (p) =>
+      handlers.onMessage(p.new),
+    )
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_unlocks' }, (p) =>
+      handlers.onUnlock(p.new),
+    )
+    .subscribe();
+
+  return () => {
+    void supabase.removeChannel(channel);
+  };
 }
 
 /** Exposed so realtime can map a raw row with a separately-resolved sender. */

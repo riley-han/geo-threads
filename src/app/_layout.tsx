@@ -17,6 +17,7 @@ import { Colors } from '@/constants/theme';
 import { clearMirror } from '@/db/fence-mirror';
 import { DATABASE_NAME, migrateDb } from '@/db/schema';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { registerPushToken, unregisterPushToken, watchPushToken } from '@/lib/push';
 import { AppearanceProvider } from '@/store/appearance-store';
 import { AuthProvider, useAuth } from '@/store/auth-store';
 import { GeofenceSync } from '@/store/geofence-sync';
@@ -81,15 +82,16 @@ function RootNavigator() {
 }
 
 /**
- * AuthProvider plus the one piece of teardown that needs the database handle:
- * the fenced-message mirror, which must not outlive the session that filled it.
+ * AuthProvider plus the teardown that must not outlive the session: the
+ * fenced-message mirror, which needs the database handle, and this device's
+ * push token, which has to be deleted while RLS still knows whose it is.
  * Split out because SQLiteProvider sits above AuthProvider, so useSQLiteContext
  * is only available in a child.
  */
 function AuthGate({ children }: { children: ReactNode }) {
   const db = useSQLiteContext();
   const clear = useCallback(async () => {
-    await clearMirror(db).catch(() => {});
+    await Promise.all([clearMirror(db).catch(() => {}), unregisterPushToken()]);
   }, [db]);
 
   return <AuthProvider onSignOut={clear}>{children}</AuthProvider>;
@@ -108,6 +110,15 @@ function AuthGate({ children }: { children: ReactNode }) {
  */
 function SignedInData({ children }: { children: ReactNode }) {
   const { session } = useAuth();
+  const userId = session?.user.id ?? null;
+
+  // Re-register on every sign-in when notifications are already allowed, so a
+  // token survives reinstalls and account switches. Never prompts.
+  useEffect(() => {
+    if (!userId) return;
+    void registerPushToken();
+    return watchPushToken();
+  }, [userId]);
 
   return (
     <MessagesProvider key={session?.user.id ?? 'signed-out'}>

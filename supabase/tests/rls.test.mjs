@@ -28,8 +28,8 @@ await db.exec(`
   create table auth.users (id uuid primary key default gen_random_uuid(), email text, raw_user_meta_data jsonb default '{}'::jsonb);
   create function auth.uid() returns uuid language sql stable as $$
     select nullif(current_setting('request.jwt.claim.sub', true), '')::uuid $$;
-  create role anon; create role authenticated;
-  grant usage on schema auth to anon, authenticated;
+  create role anon; create role authenticated; create role service_role bypassrls;
+  grant usage on schema auth to anon, authenticated, service_role;
   create publication supabase_realtime;
 `);
 for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort()) {
@@ -40,8 +40,11 @@ for (const file of readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sor
     process.exit(1);
   }
 }
-await db.exec(`grant usage on schema public to anon, authenticated;
-  grant all on all tables in schema public to authenticated, anon;`);
+// Only what a hosted project provides *before* our migrations run. Table
+// privileges are deliberately NOT granted here: the migrations must grant them
+// themselves, or this suite passes against a schema the real app cannot read —
+// which is exactly what happened the first time round.
+await db.exec(`grant usage on schema public to anon, authenticated;`);
 
 let pass = 0, fail = 0;
 const ok  = (m) => { console.log(`  \x1b[32m✔\x1b[0m ${m}`); pass++; };
@@ -174,25 +177,29 @@ await asUser(bob, () => allowed('bob records his own unlock',
   () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2) returning unlocked_at`,[mid,bob])));
 await asUser(carol, () => denied('carol unlocking a message in a thread she is not in',
   () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`,[mid,carol])));
-await asUser(alice, () => denied("alice reading bob's unlock (per-reader privacy)",
-  () => db.query(`select * from public.message_unlocks`)));
+await asUser(alice, async () => {
+  const r = await db.query(`select user_id from public.message_unlocks where message_id=$1`,[mid]);
+  r.rows.length === 1 && r.rows[0].user_id === bob
+    ? ok("alice (the sender) reads bob's receipt for her message")
+    : bad(`alice saw ${r.rows.length} receipt row(s), expected bob's 1`);
+});
 await asUser(bob, () => denied('bob forging an unlock for alice',
   () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`,[mid,alice])));
 
 console.log('\n\x1b[1m── queries the client depends on ──\x1b[0m');
-// The client reads its own unlock state through an embedded resource
-// (`unlocks:message_unlocks(...)`). That is only safe because the SELECT policy
-// scopes the table to the caller — if it were ever loosened to build a "seen by"
-// feature, unlockedAt would silently start reporting someone else's arrival.
+// The client reads unlocks through an embedded resource
+// (`unlocks:message_unlocks(...)`). Since Found It, a sender sees the finders'
+// rows there too, so the mapper must pick the viewer's own unlock by user_id
+// rather than taking the first row.
 await asUser(alice, async () => {
   const r = await db.query(
-    `select m.id, (select count(*)::int from public.message_unlocks u where u.message_id = m.id) as visible_unlocks
+    `select (select count(*)::int from public.message_unlocks u where u.message_id = m.id) as visible_unlocks
      from public.messages m where m.id = $1`,
     [mid],
   );
-  r.rows[0].visible_unlocks === 0
-    ? ok("alice cannot see bob's unlock through an embed-style subquery")
-    : bad(`alice sees ${r.rows[0].visible_unlocks} unlock(s) that are not hers`);
+  r.rows[0].visible_unlocks === 1
+    ? ok("alice sees bob's receipt through an embed-style subquery")
+    : bad(`alice sees ${r.rows[0].visible_unlocks} unlock(s), expected 1`);
 });
 await asUser(bob, async () => {
   const r = await db.query(
@@ -217,6 +224,81 @@ await asUser(alice, async () => {
     : bad(`create_conversation forked a thread: ${first} vs ${second}`);
 });
 
+console.log('\n\x1b[1m── unlock receipts ──\x1b[0m');
+const dave = (await db.query(`insert into auth.users (email, raw_user_meta_data) values ('dave@example.com','{"name":"Dave"}') returning id`)).rows[0].id;
+// Dave is friends with alice and in a group thread with alice and bob.
+await asUser(alice, () => db.query(`insert into public.friendships (requester_id,addressee_id) values ($1,$2)`,[alice,dave]));
+await asUser(dave, () => db.query(`update public.friendships set status='accepted' where requester_id=$1`,[alice]));
+let group, gmid;
+await asUser(alice, async () => {
+  group = (await db.query(`select public.create_conversation(array[$1,$2]::uuid[]) as id`,[bob,dave])).rows[0].id;
+  gmid = (await db.query(`insert into public.messages (conversation_id,sender_id,body,fence_latitude,fence_longitude,fence_radius_meters,fence_label)
+    values ($1,$2,'group hunt',37.8,-122.4,100,'Pier 39') returning id`,[group,alice])).rows[0].id;
+});
+await asUser(bob, () => allowed('bob unlocks the group message',
+  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2) returning unlocked_at`,[gmid,bob])));
+await asUser(dave, () => denied("dave (another group member, not the sender) reading bob's unlock",
+  () => db.query(`select * from public.message_unlocks where message_id=$1`,[gmid])));
+await asUser(alice, async () => {
+  const r = await db.query(`select unlocked_at from public.message_unlocks where message_id=$1`,[gmid]);
+  r.rows.length === 1 ? ok("alice (sender) reads bob's group receipt") : bad(`alice saw ${r.rows.length} group receipts`);
+  const at = r.rows[0]?.unlocked_at;
+  at && new Date(at).getUTCSeconds() === 0 && new Date(at).getUTCMilliseconds() === 0
+    ? ok('unlocked_at is coarsened to the minute')
+    : bad(`unlocked_at not coarsened: ${at}`);
+});
+await asUser(bob, () => db.query(`insert into public.message_unlocks (message_id,user_id,unlocked_at) values ($1,$2,'2001-01-01T00:00:00Z')`,[mid,bob])
+  .catch(() => null)); // already unlocked: a conflict is fine
+await asUser(dave, async () => {
+  await db.query(`insert into public.message_unlocks (message_id,user_id,unlocked_at) values ($1,$2,'2001-01-01T00:00:00Z')`,[gmid,dave]);
+  const r = await db.query(`select unlocked_at from public.message_unlocks where message_id=$1 and user_id=$2`,[gmid,dave]);
+  new Date(r.rows[0].unlocked_at).getUTCFullYear() > 2001
+    ? ok('a client-supplied unlocked_at is replaced by the server clock')
+    : bad('client backdated its unlock');
+});
+
+await asUser(bob, () => allowed('bob turns receipts off',
+  () => db.query(`update public.profiles set share_unlock_receipts=false where id=$1 returning id`,[bob])));
+await asUser(alice, () => denied("alice reading bob's receipts once he opts out",
+  () => db.query(`select * from public.message_unlocks where user_id=$1`,[bob])));
+await asUser(alice, async () => {
+  const r = await db.query(
+    `select (select count(*)::int from public.message_unlocks u where u.message_id = m.id) as n
+     from public.messages m where m.id = $1`, [gmid]);
+  r.rows[0].n === 1
+    ? ok("opted-out bob is hidden from the embed; dave's receipt still shows")
+    : bad(`alice sees ${r.rows[0].n} receipts on the group message, expected 1 (dave's)`);
+});
+await asUser(bob, async () => {
+  const r = await db.query(`select * from public.message_unlocks where user_id=$1`,[bob]);
+  r.rows.length === 2 ? ok('bob still sees his own unlocks with receipts off') : bad(`bob sees ${r.rows.length} of his 2 unlocks`);
+});
+await asUser(bob, () => db.query(`update public.profiles set share_unlock_receipts=true where id=$1`,[bob]));
+
+console.log('\n\x1b[1m── push_tokens ──\x1b[0m');
+await asUser(alice, () => allowed('alice registers a push token',
+  () => db.query(`select public.register_push_token('ExponentPushToken[shared]','ios')`)));
+await asUser(alice, () => allowed('re-registering the same token is an upsert',
+  () => db.query(`select public.register_push_token('ExponentPushToken[shared]','ios')`)));
+await asUser(bob, () => denied("bob reading alice's push token",
+  () => db.query(`select * from public.push_tokens`)));
+await asUser(bob, () => denied('bob inserting a token row directly',
+  () => db.query(`insert into public.push_tokens (user_id,token,platform) values ($1,'ExponentPushToken[x]','ios')`,[bob])));
+await asUser(bob, () => denied("bob deleting alice's token",
+  () => db.query(`delete from public.push_tokens where user_id=$1 returning token`,[alice])));
+await asUser(bob, () => allowed('bob signs in on the same device and registers that token',
+  () => db.query(`select public.register_push_token('ExponentPushToken[shared]','ios')`)));
+const owners = (await db.query(`select user_id from public.push_tokens where token='ExponentPushToken[shared]'`)).rows;
+owners.length === 1 && owners[0].user_id === bob
+  ? ok('the token moved to bob; alice no longer receives pushes on that device')
+  : bad(`token owned by ${owners.length} account(s)`);
+await asUser(bob, async () => {
+  const r = await db.query(`delete from public.push_tokens where token='ExponentPushToken[shared]' returning token`);
+  r.rows.length === 1 ? ok('bob removes his own token on sign-out') : bad('bob could not remove his token');
+});
+await asUser(alice, () => denied('register_push_token rejects an unknown platform',
+  () => db.query(`select public.register_push_token('ExponentPushToken[y]','web')`)));
+
 console.log('\n\x1b[1m── constraints ──\x1b[0m');
 await asUser(alice, async () => {
   await denied('half-populated geofence (lat, no radius)',
@@ -233,14 +315,14 @@ await asUser(alice, async () => {
 
 console.log('\n\x1b[1m── anon (signed-out) sees nothing ──\x1b[0m');
 await db.exec(`set role anon; select set_config('request.jwt.claim.sub','',false);`);
-for (const t of ['profiles','friendships','conversations','conversation_participants','messages','message_unlocks']) {
+for (const t of ['profiles','friendships','conversations','conversation_participants','messages','message_unlocks','push_tokens']) {
   await denied(`anon reading ${t}`, () => db.query(`select * from public.${t}`));
 }
 await db.exec(`reset role`);
 
 console.log('\n\x1b[1m── every policy-filtered column is indexed ──\x1b[0m');
 const idx = (await db.query(`select tablename, indexdef from pg_indexes where schemaname='public'`)).rows;
-for (const [t,c] of [['friendships','requester_id'],['friendships','addressee_id'],['conversations','created_by'],['conversation_participants','user_id'],['messages','conversation_id'],['messages','sender_id'],['message_unlocks','user_id']]) {
+for (const [t,c] of [['friendships','requester_id'],['friendships','addressee_id'],['conversations','created_by'],['conversation_participants','user_id'],['messages','conversation_id'],['messages','sender_id'],['message_unlocks','user_id'],['push_tokens','user_id'],['push_tokens','token']]) {
   idx.some(i => i.tablename===t && i.indexdef.includes(c)) ? ok(`${t}.${c}`) : bad(`${t}.${c} is NOT indexed — RLS will seq-scan`);
 }
 

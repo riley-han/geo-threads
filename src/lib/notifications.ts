@@ -4,6 +4,8 @@ import { Platform } from 'react-native';
 import type { MirroredMessage } from '@/db/fence-mirror';
 
 export const ARRIVAL_CHANNEL = 'arrivals';
+/** Remote pushes: new messages and receipts. Must match the push Edge Function. */
+export const MESSAGES_CHANNEL = 'messages';
 
 /** Set at module scope so the handler exists before any notification can land. */
 Notifications.setNotificationHandler({
@@ -22,11 +24,30 @@ export async function requestNotificationAccess(): Promise<boolean> {
       name: 'Arrivals',
       importance: Notifications.AndroidImportance.HIGH,
     });
+    await Notifications.setNotificationChannelAsync(MESSAGES_CHANNEL, {
+      name: 'Messages',
+      importance: Notifications.AndroidImportance.HIGH,
+    });
   }
   const { status } = await Notifications.requestPermissionsAsync({
     ios: { allowAlert: true, allowBadge: true, allowSound: true },
   });
   return status === 'granted';
+}
+
+/** Whether notifications are already allowed, without prompting. */
+export async function hasNotificationAccess(): Promise<boolean> {
+  return (await notificationAccess()) === 'granted';
+}
+
+/**
+ * 'blocked' means the OS will not show the prompt again, so only Settings can
+ * turn notifications on. 'off' means asking still works.
+ */
+export async function notificationAccess(): Promise<'granted' | 'off' | 'blocked'> {
+  const { status, canAskAgain } = await Notifications.getPermissionsAsync();
+  if (status === 'granted') return 'granted';
+  return canAskAgain ? 'off' : 'blocked';
 }
 
 /**
