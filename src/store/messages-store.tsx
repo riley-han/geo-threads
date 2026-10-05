@@ -14,7 +14,8 @@ import { AppState, type AppStateStatus } from 'react-native';
 
 import * as repo from '@/data/repository';
 import { conversationTitle } from '@/data/repository';
-import type { Conversation, Message, Person } from '@/data/types';
+import { isReaction, type Reaction } from '@/data/reactions';
+import type { Conversation, Message, MessageReaction, Person } from '@/data/types';
 import { fenceKey } from '@/data/types';
 import { clearMirror, mirrorOwner, replaceMirror, type MirroredMessage } from '@/db/fence-mirror';
 import type { Geofence } from '@/lib/geo';
@@ -37,6 +38,8 @@ type MessagesApi = {
   createConversation: (participantIds: string[], title?: string) => Promise<CreateResult>;
   markRead: (conversationId: string) => Promise<void>;
   unlockMessage: (messageId: string) => Promise<void>;
+  /** Sets, changes or (with null) removes your reaction. */
+  reactToMessage: (messageId: string, emoji: Reaction | null) => Promise<SendResult>;
   requestMessages: (conversationId: string) => void;
 };
 
@@ -296,12 +299,24 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     [myId, patchMessage, loadInbox],
   );
 
+  const onRemoteReaction = useCallback(
+    (row: Record<string, unknown>) => {
+      const personId = row.user_id as string;
+      const emoji = isReaction(row.emoji) ? row.emoji : null;
+      patchMessage(row.message_id as string, (m) => ({
+        ...m,
+        reactions: withReaction(m.reactions, personId, emoji),
+      }));
+    },
+    [patchMessage],
+  );
+
   // Handlers go through a ref so the channel subscribes once per account rather
   // than on every render that changes a callback's identity.
-  const realtimeHandlers = useRef({ onRemoteMessage, onRemoteUnlock });
+  const realtimeHandlers = useRef({ onRemoteMessage, onRemoteUnlock, onRemoteReaction });
   useEffect(() => {
-    realtimeHandlers.current = { onRemoteMessage, onRemoteUnlock };
-  }, [onRemoteMessage, onRemoteUnlock]);
+    realtimeHandlers.current = { onRemoteMessage, onRemoteUnlock, onRemoteReaction };
+  }, [onRemoteMessage, onRemoteUnlock, onRemoteReaction]);
 
   // The provider is keyed by user id, so switching account tears this down.
   useEffect(() => {
@@ -309,6 +324,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     return repo.subscribeToMessageEvents(myId, {
       onMessage: (row) => void realtimeHandlers.current.onRemoteMessage(row),
       onUnlock: (row) => void realtimeHandlers.current.onRemoteUnlock(row),
+      onReaction: (row) => realtimeHandlers.current.onRemoteReaction(row),
     });
   }, [myId]);
 
@@ -332,6 +348,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         fence,
         unlockedAt: null,
         foundBy: [],
+        reactions: [],
         status: 'sending',
       });
 
@@ -423,6 +440,28 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     [myId, pendingFenced, applyPendingFenced, loadInbox],
   );
 
+  const reactToMessage = useCallback(
+    async (messageId: string, emoji: Reaction | null): Promise<SendResult> => {
+      if (!myId) return { error: 'Not signed in.' };
+
+      patchMessage(messageId, (m) => ({
+        ...m,
+        reactions: withReaction(m.reactions, myId, emoji),
+      }));
+
+      const { error } = await repo.setReaction(messageId, myId, emoji);
+      if (error) {
+        // Refetch rather than undo: the server's state is the truth, and a
+        // realtime update may have landed in between.
+        for (const [cid, entry] of entriesRef.current) {
+          if (entry.messages.some((m) => m.id === messageId)) void loadMessages(cid);
+        }
+      }
+      return { error };
+    },
+    [myId, patchMessage, loadMessages],
+  );
+
   // Screens ask for a conversation's messages by rendering; fetch on demand.
   const requestMessages = useCallback(
     (conversationId: string) => {
@@ -443,6 +482,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       createConversation,
       markRead,
       unlockMessage,
+      reactToMessage,
       requestMessages,
     }),
     [
@@ -455,11 +495,22 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       createConversation,
       markRead,
       unlockMessage,
+      reactToMessage,
       requestMessages,
     ],
   );
 
   return <MessagesContext.Provider value={api}>{children}</MessagesContext.Provider>;
+}
+
+/** One reaction per person: replaces theirs, or removes it when emoji is null. */
+function withReaction(
+  reactions: MessageReaction[],
+  personId: string,
+  emoji: Reaction | null,
+): MessageReaction[] {
+  const others = reactions.filter((r) => r.personId !== personId);
+  return emoji ? [...others, { emoji, personId }] : others;
 }
 
 /** A placeholder profile for the optimistic row; the inserted row replaces it. */
@@ -541,9 +592,10 @@ export function usePendingFencedMessages(): Message[] {
 }
 
 export function useMessageActions() {
-  const { sendMessage, createConversation, markRead, unlockMessage } = useMessagesApi();
+  const { sendMessage, createConversation, markRead, unlockMessage, reactToMessage } =
+    useMessagesApi();
   return useMemo(
-    () => ({ sendMessage, createConversation, markRead, unlockMessage }),
-    [sendMessage, createConversation, markRead, unlockMessage],
+    () => ({ sendMessage, createConversation, markRead, unlockMessage, reactToMessage }),
+    [sendMessage, createConversation, markRead, unlockMessage, reactToMessage],
   );
 }

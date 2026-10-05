@@ -124,6 +124,45 @@ export type Database = {
           },
         ]
       }
+      message_reactions: {
+        Row: {
+          created_at: string
+          emoji: string | null
+          message_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          emoji?: string | null
+          message_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          emoji?: string | null
+          message_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_reactions_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "message_reactions_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       message_unlocks: {
         Row: {
           message_id: string
@@ -241,6 +280,35 @@ export type Database = {
         }
         Relationships: []
       }
+      push_log: {
+        Row: {
+          created_at: string
+          id: number
+          kind: string
+          recipient_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: never
+          kind: string
+          recipient_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: never
+          kind?: string
+          recipient_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_log_recipient_id_fkey"
+            columns: ["recipient_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       push_tokens: {
         Row: {
           platform: string
@@ -275,6 +343,14 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      claim_push_slot: {
+        Args: {
+          p_kind: string
+          p_recipient_id: string
+          p_window_seconds: number
+        }
+        Returns: boolean
+      }
       create_conversation: {
         Args: { p_participant_ids: string[]; p_title?: string }
         Returns: string

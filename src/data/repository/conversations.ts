@@ -20,7 +20,8 @@ const CONVERSATION_SELECT = `
     id, conversation_id, sender_id, body, sent_at,
     fence_latitude, fence_longitude, fence_radius_meters, fence_label, fence_key,
     sender:profiles!messages_sender_id_fkey ( id, name, handle, avatar_url ),
-    unlocks:message_unlocks ( unlocked_at )
+    unlocks:message_unlocks ( user_id, unlocked_at ),
+    reactions:message_reactions ( user_id, emoji )
   )
 `;
 

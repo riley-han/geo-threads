@@ -231,9 +231,21 @@ In the dashboard, under **Database → Webhooks**, create:
 | --- | --- | --- |
 | `push-on-message` | `public.messages` | Insert |
 | `push-on-unlock` | `public.message_unlocks` | Insert |
+| `push-on-reaction` | `public.message_reactions` | Insert |
 
-For both, choose **Supabase Edge Functions**, select `push` and method `POST`,
+For each, choose **Supabase Edge Functions**, select `push` and method `POST`,
 then add an HTTP header `x-webhook-secret` with the same value as above.
+
+Set the schema to **`public`** before picking the table. Supabase Realtime has
+its own `realtime.messages` table, and a webhook attached to it never fires for
+your messages. To check which table each webhook is on:
+
+```bash
+npx supabase db query --linked "select t.tgname, n.nspname || '.' || c.relname as tbl from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace where not t.tgisinternal and not c.relispartition and t.tgfoid = 'supabase_functions.http_request'::regproc"
+```
+
+If saving a webhook fails with `schema "supabase_functions" does not exist`,
+enable webhooks first under **Integrations → Database Webhooks**.
 
 These are not in a migration on purpose: they need the project URL and the
 secret, and neither belongs in version control.
@@ -245,6 +257,11 @@ secret, and neither belongs in version control.
 | New open message | every other participant | sender, then a 140-character preview |
 | New fenced message | every other participant | "Left you a message at {place}". The body is **never** included. |
 | Unlock | the message's sender, if the finder shares receipts | "{name} found your message at {place}" |
+| Reaction | the message's author, unless they reacted themselves | "Reacted ❤️ to "…"", or "Reacted ❤️ to your message at {place}" for a fenced message |
+
+Reaction pushes are collapsed: the first reaction to an author pushes, and any
+more within five minutes stay silent. They still appear live in the app. The
+`claim_push_slot` RPC and `push_log` table do this; both are server-only.
 
 Message pushes go only to recipients and unlock pushes only to senders, so
 neither duplicates the finder's local arrival alert. Tokens that Expo reports as

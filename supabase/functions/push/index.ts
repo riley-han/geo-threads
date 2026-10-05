@@ -1,9 +1,11 @@
 // Push Edge Function: turns database inserts into Expo push notifications.
 //
-// Invoked by two Database Webhooks (see supabase/README.md → Push):
-//   - INSERT on public.messages        → every other participant
-//   - INSERT on public.message_unlocks → the message's sender, if the finder
-//                                        shares receipts
+// Invoked by Database Webhooks (see supabase/README.md → Push):
+//   - INSERT on public.messages          → every other participant
+//   - INSERT on public.message_unlocks   → the message's sender, if the finder
+//                                          shares receipts
+//   - INSERT on public.message_reactions → the message's author, at most one
+//                                          reaction push per 5 minutes
 //
 // Message pushes go to recipients only and unlock pushes to senders only, so
 // neither duplicates the finder's local arrival alert from the geofence task.
@@ -18,6 +20,10 @@ const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 /** Expo accepts at most 100 messages per request. */
 const EXPO_BATCH = 100;
 const PREVIEW_LENGTH = 140;
+/** Quoted message text in a reaction push is shorter: it sits after the emoji. */
+const REACTION_PREVIEW_LENGTH = 60;
+/** Several reactions to one author within this window become one push. */
+const REACTION_WINDOW_SECONDS = 5 * 60;
 /** Must match MESSAGES_CHANNEL in src/lib/notifications.ts. */
 const ANDROID_CHANNEL = 'messages';
 
@@ -38,6 +44,8 @@ type MessageRecord = {
 };
 
 type UnlockRecord = { message_id: string; user_id: string };
+
+type ReactionRecord = { message_id: string; user_id: string; emoji: string | null };
 
 type ExpoMessage = {
   to: string;
@@ -78,7 +86,9 @@ Deno.serve(async (req) => {
         ? await forNewMessage(payload.record as unknown as MessageRecord)
         : payload.table === 'message_unlocks'
           ? await forUnlock(payload.record as unknown as UnlockRecord)
-          : [];
+          : payload.table === 'message_reactions'
+            ? await forReaction(payload.record as unknown as ReactionRecord)
+            : [];
 
     const sent = await send(messages);
     return Response.json({ sent });
@@ -149,6 +159,46 @@ async function forUnlock(unlock: UnlockRecord): Promise<ExpoMessage[]> {
     title: 'Found it',
     body: `${finder.name} found your message at ${place}`,
     data: { conversationId: message.conversation_id, kind: 'receipt' },
+  });
+}
+
+/**
+ * Someone reacted: tell the message's author, collapsed so a burst of
+ * reactions is one push. Only inserts arrive here, so changing a reaction (an
+ * update) never pushes. The later reactions in a burst still show live in the
+ * app through realtime.
+ */
+async function forReaction(reaction: ReactionRecord): Promise<ExpoMessage[]> {
+  if (!reaction.emoji) return [];
+
+  const { data: message } = await supabase
+    .from('messages')
+    .select('id, conversation_id, sender_id, body, fence_latitude, fence_label')
+    .eq('id', reaction.message_id)
+    .maybeSingle();
+  if (!message || message.sender_id === reaction.user_id) return [];
+
+  // Atomic: of several reactions landing at once, exactly one claims the slot.
+  const { data: claimed, error } = await supabase.rpc('claim_push_slot', {
+    p_recipient_id: message.sender_id,
+    p_kind: 'reaction',
+    p_window_seconds: REACTION_WINDOW_SECONDS,
+  });
+  if (error) throw error;
+  if (!claimed) return [];
+
+  const reactor = await profileName(reaction.user_id);
+  // A fenced message's text stays off the lock screen here too, even though
+  // the reactor has read it: the author's lock screen is not the place.
+  const body =
+    message.fence_latitude != null
+      ? `Reacted ${reaction.emoji} to your message at ${message.fence_label || 'a place'}`
+      : `Reacted ${reaction.emoji} to “${truncate(message.body as string, REACTION_PREVIEW_LENGTH)}”`;
+
+  return toExpoMessages([message.sender_id as string], {
+    title: reactor,
+    body,
+    data: { conversationId: message.conversation_id, kind: 'reaction' },
   });
 }
 
