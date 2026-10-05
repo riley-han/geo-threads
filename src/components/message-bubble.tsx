@@ -1,14 +1,19 @@
+import { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { FenceBadge } from '@/components/fence-chip';
 import { FoundReceipt } from '@/components/found-receipt';
 import { GlassPanel } from '@/components/glass-panel';
+import { ReactionBar } from '@/components/reaction-bar';
+import { ReactionPicker } from '@/components/reaction-picker';
 import { ThemedText } from '@/components/themed-text';
 import { Fonts, Spacing } from '@/constants/theme';
+import type { Reaction } from '@/data/reactions';
 import type { Message } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { formatDistance, formatRadius } from '@/lib/geo';
 import { messageVisibility } from '@/lib/message-visibility';
+import { useAuth } from '@/store/auth-store';
 import { useCurrentPosition } from '@/store/location-store';
 import { useMessageActions } from '@/store/messages-store';
 
@@ -33,10 +38,27 @@ export function MessageBubble({
 }: Props) {
   const theme = useTheme();
   const position = useCurrentPosition();
-  const { unlockMessage } = useMessageActions();
+  const { unlockMessage, reactToMessage } = useMessageActions();
+  const myId = useAuth().user?.id ?? null;
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // Set when this viewer unlocks the message here, so the "tell them you found
+  // it" prompt appears once, in the moment, and not on every later visit.
+  const [justUnlocked, setJustUnlocked] = useState(false);
 
   const fence = message.fence;
   const visibility = messageVisibility(message, position);
+
+  // You react to what you have read: only open, delivered messages.
+  const canReact = visibility.kind === 'open' && message.status === 'sent';
+  const mine: Reaction | null =
+    message.reactions.find((r) => r.personId === myId)?.emoji ?? null;
+  const align = isMine ? 'end' : 'start';
+  const showNudge = canReact && justUnlocked && !isMine && mine == null;
+
+  const pick = (emoji: Reaction) => {
+    setPickerOpen(false);
+    void reactToMessage(message.id, emoji === mine ? null : emoji);
+  };
 
   const bubbleRadius = {
     borderTopLeftRadius: 18,
@@ -54,7 +76,11 @@ export function MessageBubble({
       ) : null}
 
       {visibility.kind === 'unlockable' ? (
-        <Pressable onPress={() => unlockMessage(message.id)}>
+        <Pressable
+          onPress={() => {
+            setJustUnlocked(true);
+            void unlockMessage(message.id);
+          }}>
           <GlassPanel
             variant="regular"
             interactive
@@ -94,20 +120,51 @@ export function MessageBubble({
           ) : null}
         </GlassPanel>
       ) : (
-        <View
-          style={[
-            styles.bubble,
-            bubbleRadius,
-            isMine
-              ? { backgroundColor: theme.primary }
-              : { backgroundColor: theme.backgroundElement },
-          ]}>
-          <ThemedText type="default" style={[styles.body, isMine && { color: theme.onPrimary }]}>
-            {message.body}
-          </ThemedText>
-          {fence ? <FenceBadge fence={fence} tone={isMine ? 'onPrimary' : 'muted'} /> : null}
-        </View>
+        <Pressable
+          onLongPress={canReact ? () => setPickerOpen((open) => !open) : undefined}
+          delayLongPress={300}
+          accessibilityHint={canReact ? 'Long press to react' : undefined}
+          style={styles.bubbleWidth}>
+          <View
+            style={[
+              styles.bubble,
+              styles.bubbleFill,
+              bubbleRadius,
+              isMine
+                ? { backgroundColor: theme.primary }
+                : { backgroundColor: theme.backgroundElement },
+            ]}>
+            <ThemedText
+              type="default"
+              style={[styles.body, isMine && { color: theme.onPrimary }]}>
+              {message.body}
+            </ThemedText>
+            {fence ? <FenceBadge fence={fence} tone={isMine ? 'onPrimary' : 'muted'} /> : null}
+          </View>
+        </Pressable>
       )}
+
+      {canReact ? (
+        <ReactionBar
+          reactions={message.reactions}
+          mine={mine}
+          onToggle={pick}
+          align={align}
+        />
+      ) : null}
+
+      {pickerOpen || showNudge ? (
+        <ReactionPicker
+          mine={mine}
+          onPick={pick}
+          align={align}
+          prompt={
+            showNudge && !pickerOpen
+              ? `Tell ${message.sender.name.split(' ')[0]} you found it`
+              : undefined
+          }
+        />
+      ) : null}
 
       {isMine && fence && message.status === 'sent' ? (
         <FoundReceipt foundBy={message.foundBy} recipientCount={recipientCount} />
@@ -131,6 +188,13 @@ const styles = StyleSheet.create({
     marginLeft: Spacing.three,
     marginBottom: 2,
     marginTop: Spacing.two,
+  },
+  // The long-press target carries the width cap; the bubble inside fills it.
+  bubbleWidth: {
+    maxWidth: '78%',
+  },
+  bubbleFill: {
+    maxWidth: '100%',
   },
   bubble: {
     maxWidth: '78%',

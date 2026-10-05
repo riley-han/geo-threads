@@ -299,6 +299,71 @@ await asUser(bob, async () => {
 await asUser(alice, () => denied('register_push_token rejects an unknown platform',
   () => db.query(`select public.register_push_token('ExponentPushToken[y]','web')`)));
 
+console.log('\n\x1b[1m── message_reactions ──\x1b[0m');
+const unfenced = (await db.query(`select id from public.messages where body='unfenced'`)).rows[0].id;
+const lockedForBob = (await db.query(`select id from public.messages where body='k:typical'`)).rows[0].id;
+await asUser(bob, () => allowed('bob reacts to an open message',
+  () => db.query(`insert into public.message_reactions (message_id,user_id,emoji) values ($1,$2,'❤️') returning emoji`,[unfenced,bob])));
+await asUser(bob, () => allowed('bob reacts to a fenced message he has unlocked',
+  () => db.query(`insert into public.message_reactions (message_id,user_id,emoji) values ($1,$2,'😮') returning emoji`,[mid,bob])));
+await asUser(bob, () => denied('bob reacting to a fenced message he has NOT unlocked',
+  () => db.query(`insert into public.message_reactions (message_id,user_id,emoji) values ($1,$2,'😂')`,[lockedForBob,bob])));
+await asUser(alice, () => allowed('alice (sender) reacts to her own fenced message',
+  () => db.query(`insert into public.message_reactions (message_id,user_id,emoji) values ($1,$2,'🙏') returning emoji`,[lockedForBob,alice])));
+await asUser(carol, () => denied('carol reacting in a thread she is not in',
+  () => db.query(`insert into public.message_reactions (message_id,user_id,emoji) values ($1,$2,'❤️')`,[unfenced,carol])));
+await asUser(bob, () => denied('bob reacting as alice',
+  () => db.query(`insert into public.message_reactions (message_id,user_id,emoji) values ($1,$2,'❤️')`,[unfenced,alice])));
+await asUser(bob, () => denied('an emoji outside the fixed set',
+  () => db.query(`update public.message_reactions set emoji='👍' where message_id=$1 and user_id=$2 returning emoji`,[unfenced,bob])));
+await asUser(bob, async () => {
+  const r = await db.query(`update public.message_reactions set emoji='😂' where message_id=$1 and user_id=$2 returning emoji`,[unfenced,bob]);
+  r.rows[0]?.emoji === '😂' ? ok('bob changes his reaction') : bad('bob could not change his reaction');
+  const off = await db.query(`update public.message_reactions set emoji=null where message_id=$1 and user_id=$2 returning emoji`,[unfenced,bob]);
+  off.rows.length === 1 && off.rows[0].emoji === null ? ok('bob removes it by setting emoji to null') : bad('bob could not remove his reaction');
+});
+await asUser(alice, () => denied("alice changing bob's reaction",
+  () => db.query(`update public.message_reactions set emoji='❤️' where user_id=$1 returning emoji`,[bob])));
+await asUser(bob, () => denied('clients cannot delete reaction rows (removal is emoji = null)',
+  () => db.query(`delete from public.message_reactions where user_id=$1 returning message_id`,[bob])));
+await asUser(alice, async () => {
+  const r = await db.query(`select user_id from public.message_reactions where message_id=$1`,[mid]);
+  r.rows.length === 1 && r.rows[0].user_id === bob ? ok("alice sees bob's reaction in their thread") : bad(`alice saw ${r.rows.length} reactions on mid`);
+});
+await asUser(carol, () => denied('carol reading reactions in a thread she is not in',
+  () => db.query(`select * from public.message_reactions`)));
+
+console.log('\n\x1b[1m── reaction set parity with src/data/reactions.ts ──\x1b[0m');
+const reactionsTs = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'data', 'reactions.ts'), 'utf8');
+const jsSet = [...reactionsTs.match(/REACTIONS = \[([^\]]*)\]/)[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+const checkDef = (await db.query(`select pg_get_constraintdef(c.oid) as def from pg_constraint c
+  where c.conrelid='public.message_reactions'::regclass and c.contype='c'`)).rows.map((r) => r.def).join(' ');
+const pgSet = [...checkDef.matchAll(/'([^']+)'::text/g)].map((m) => m[1]);
+JSON.stringify(jsSet) === JSON.stringify(pgSet)
+  ? ok(`same set, same order: ${jsSet.join(' ')}`)
+  : bad(`client ${jsSet.join(' ')} ≠ database ${pgSet.join(' ')}`);
+
+console.log('\n\x1b[1m── push_log / claim_push_slot (server only) ──\x1b[0m');
+await asUser(alice, () => denied('authenticated calling claim_push_slot',
+  () => db.query(`select public.claim_push_slot($1,'reaction',300) as ok`,[alice])));
+await asUser(alice, () => denied('authenticated reading push_log',
+  () => db.query(`select * from public.push_log`)));
+await db.exec(`set role service_role`);
+try {
+  const first = (await db.query(`select public.claim_push_slot($1,'reaction',300) as ok`,[alice])).rows[0].ok;
+  const second = (await db.query(`select public.claim_push_slot($1,'reaction',300) as ok`,[alice])).rows[0].ok;
+  const otherKind = (await db.query(`select public.claim_push_slot($1,'receipt',300) as ok`,[alice])).rows[0].ok;
+  const otherUser = (await db.query(`select public.claim_push_slot($1,'reaction',300) as ok`,[bob])).rows[0].ok;
+  first === true && second === false
+    ? ok('second reaction push to the same author within the window is suppressed')
+    : bad(`claim results first=${first} second=${second}`);
+  otherKind && otherUser ? ok('the window is per recipient and per kind') : bad(`otherKind=${otherKind} otherUser=${otherUser}`);
+  await db.query(`update public.push_log set created_at = now() - interval '6 minutes' where recipient_id=$1`,[alice]);
+  (await db.query(`select public.claim_push_slot($1,'reaction',300) as ok`,[alice])).rows[0].ok === true
+    ? ok('a new slot opens once the window has passed')
+    : bad('slot never reopened');
+} finally { await db.exec(`reset role`); }
+
 console.log('\n\x1b[1m── constraints ──\x1b[0m');
 await asUser(alice, async () => {
   await denied('half-populated geofence (lat, no radius)',
@@ -315,14 +380,14 @@ await asUser(alice, async () => {
 
 console.log('\n\x1b[1m── anon (signed-out) sees nothing ──\x1b[0m');
 await db.exec(`set role anon; select set_config('request.jwt.claim.sub','',false);`);
-for (const t of ['profiles','friendships','conversations','conversation_participants','messages','message_unlocks','push_tokens']) {
+for (const t of ['profiles','friendships','conversations','conversation_participants','messages','message_unlocks','push_tokens','message_reactions','push_log']) {
   await denied(`anon reading ${t}`, () => db.query(`select * from public.${t}`));
 }
 await db.exec(`reset role`);
 
 console.log('\n\x1b[1m── every policy-filtered column is indexed ──\x1b[0m');
 const idx = (await db.query(`select tablename, indexdef from pg_indexes where schemaname='public'`)).rows;
-for (const [t,c] of [['friendships','requester_id'],['friendships','addressee_id'],['conversations','created_by'],['conversation_participants','user_id'],['messages','conversation_id'],['messages','sender_id'],['message_unlocks','user_id'],['push_tokens','user_id'],['push_tokens','token']]) {
+for (const [t,c] of [['friendships','requester_id'],['friendships','addressee_id'],['conversations','created_by'],['conversation_participants','user_id'],['messages','conversation_id'],['messages','sender_id'],['message_unlocks','user_id'],['push_tokens','user_id'],['push_tokens','token'],['message_reactions','user_id']]) {
   idx.some(i => i.tablename===t && i.indexdef.includes(c)) ? ok(`${t}.${c}`) : bad(`${t}.${c} is NOT indexed — RLS will seq-scan`);
 }
 

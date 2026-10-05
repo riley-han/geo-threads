@@ -1,3 +1,4 @@
+import type { Reaction } from '@/data/reactions';
 import type { Geofence } from '@/lib/geo';
 import type { Message, Person } from '@/data/types';
 import { supabase } from '@/lib/supabase';
@@ -20,7 +21,8 @@ const MESSAGE_SELECT = `
   unlocks:message_unlocks (
     user_id, unlocked_at,
     finder:profiles!message_unlocks_user_id_fkey ( id, name, handle, avatar_url )
-  )
+  ),
+  reactions:message_reactions ( user_id, emoji )
 `;
 
 export async function fetchMessages(
@@ -123,9 +125,10 @@ export async function unlockMessage(
 }
 
 /**
- * Live inserts on `messages` and `message_unlocks`. RLS applies to realtime, so
- * this only delivers messages in your threads, your own unlocks, and receipts
- * for your messages from finders who share them. Returns the unsubscribe.
+ * Live inserts on `messages` and `message_unlocks`, and reaction changes. RLS
+ * applies to realtime, so this only delivers messages in your threads, your own
+ * unlocks, receipts for your messages from finders who share them, and
+ * reactions in your threads. Returns the unsubscribe.
  *
  * Rows arrive raw: no embedded sender or finder profile.
  */
@@ -134,6 +137,8 @@ export function subscribeToMessageEvents(
   handlers: {
     onMessage: (row: Record<string, unknown>) => void;
     onUnlock: (row: Record<string, unknown>) => void;
+    /** Inserts and updates; a removed reaction arrives as an update to null. */
+    onReaction: (row: Record<string, unknown>) => void;
   },
 ): () => void {
   const channel = supabase
@@ -143,6 +148,12 @@ export function subscribeToMessageEvents(
     )
     .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_unlocks' }, (p) =>
       handlers.onUnlock(p.new),
+    )
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions' }, (p) =>
+      handlers.onReaction(p.new),
+    )
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'message_reactions' }, (p) =>
+      handlers.onReaction(p.new),
     )
     .subscribe();
 
@@ -170,7 +181,24 @@ export function messageFromRealtimeRow(
       // unlocked it is not in there, so treat it as locked; the reducer keeps
       // any unlock already known locally.
       unlocks: [],
+      reactions: [],
     },
     myId,
   );
+}
+
+/**
+ * Sets, changes or removes (emoji = null) this viewer's reaction. An upsert on
+ * the (message_id, user_id) key, so every case is the same call. Removal is an
+ * update to null rather than a delete; see the reactions migration for why.
+ */
+export async function setReaction(
+  messageId: string,
+  myId: string,
+  emoji: Reaction | null,
+): Promise<{ error: string | null }> {
+  const { error } = await supabase
+    .from('message_reactions')
+    .upsert({ message_id: messageId, user_id: myId, emoji }, { onConflict: 'message_id,user_id' });
+  return { error: error ? describeError(error) : null };
 }

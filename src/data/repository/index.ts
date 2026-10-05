@@ -21,6 +21,7 @@ export {
   fetchMessages,
   fetchPendingFenced,
   messageFromRealtimeRow,
+  setReaction,
   subscribeToMessageEvents,
   unlockMessage,
 } from './messages';

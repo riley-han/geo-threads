@@ -1,3 +1,4 @@
+import type { Reaction } from '@/data/reactions';
 import type { Geofence } from '@/lib/geo';
 
 /**
@@ -37,12 +38,16 @@ export type Message = {
    * for finders who share receipts (profiles.share_unlock_receipts).
    */
   foundBy: FoundBy[];
+  /** Current reactions, one per person at most. Removed reactions are absent. */
+  reactions: MessageReaction[];
   /** 'sending' until the insert lands, so an optimistic row is distinguishable. */
   status: 'sent' | 'sending' | 'failed';
 };
 
 /** One receipt: a finder and when they unlocked, epoch ms (minute precision). */
 export type FoundBy = { person: Person; at: number };
+
+export type MessageReaction = { emoji: Reaction; personId: string };
 
 export type Conversation = {
   id: string;

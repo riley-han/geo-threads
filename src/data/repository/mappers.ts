@@ -1,4 +1,5 @@
-import type { Conversation, FoundBy, Message, Person } from '@/data/types';
+import { isReaction } from '@/data/reactions';
+import type { Conversation, FoundBy, Message, MessageReaction, Person } from '@/data/types';
 import type { Geofence } from '@/lib/geo';
 
 /**
@@ -26,12 +27,16 @@ export type MessageRowWithRefs = {
   fence_key?: string | null;
   sender: ProfileFields | null;
   unlocks: UnlockRowWithFinder[] | null;
+  reactions?: ReactionRow[] | null;
 };
+
+export type ReactionRow = { user_id: string; emoji: string | null };
 
 export type UnlockRowWithFinder = {
   user_id: string;
   unlocked_at: string;
-  finder: ProfileFields | null;
+  /** Absent from the inbox embed, which only needs the viewer's own unlock. */
+  finder?: ProfileFields | null;
 };
 
 export type ConversationRowWithRefs = {
@@ -108,8 +113,22 @@ export function toMessage(row: MessageRowWithRefs, myId: string): Message {
     // (receipts), so this viewer's unlock has to be picked out by id.
     unlockedAt: toEpochMs(unlocks.find((u) => u.user_id === myId)?.unlocked_at),
     foundBy: isMine ? toFoundBy(unlocks, myId) : [],
+    reactions: toReactions(row.reactions ?? []),
     status: 'sent',
   };
+}
+
+/**
+ * A null emoji is a removed reaction (rows are never deleted; see the
+ * reactions migration). Anything outside the fixed set is dropped rather than
+ * trusted, so a stale client never renders an emoji it has no slot for.
+ */
+export function toReactions(rows: ReactionRow[]): MessageReaction[] {
+  const out: MessageReaction[] = [];
+  for (const r of rows) {
+    if (isReaction(r.emoji)) out.push({ emoji: r.emoji, personId: r.user_id });
+  }
+  return out;
 }
 
 /** Receipts on your own message: everyone but you, oldest first. */
