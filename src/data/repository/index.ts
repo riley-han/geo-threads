@@ -28,6 +28,8 @@ export {
 
 export { deletePushToken, savePushToken } from './push';
 
+export { checkInTrailStep, createTrail, fetchTrails, type CheckInResult } from './trails';
+
 export { fetchProfile, searchProfiles } from './profiles';
 
 export {

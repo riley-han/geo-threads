@@ -1,9 +1,12 @@
 // Push Edge Function: turns database inserts into Expo push notifications.
 //
 // Invoked by Database Webhooks (see supabase/README.md → Push):
-//   - INSERT on public.messages          → every other participant
+//   - INSERT on public.messages          → every other participant (for a
+//                                          trail, only stop 1: the rest are
+//                                          hidden until earned)
 //   - INSERT on public.message_unlocks   → the message's sender, if the finder
-//                                          shares receipts
+//                                          shares receipts (for a trail: "found
+//                                          stop 2 of 5", or "finished")
 //   - INSERT on public.message_reactions → the message's author, at most one
 //                                          reaction push per 5 minutes
 //
@@ -41,6 +44,8 @@ type MessageRecord = {
   body: string;
   fence_latitude: number | null;
   fence_label: string | null;
+  trail_id?: string | null;
+  trail_step?: number | null;
 };
 
 type UnlockRecord = { message_id: string; user_id: string };
@@ -100,6 +105,10 @@ Deno.serve(async (req) => {
 
 /** A new message: push every participant except the sender. */
 async function forNewMessage(message: MessageRecord): Promise<ExpoMessage[]> {
+  // A trail's later stops are hidden until earned. A push per stop would name
+  // their places on the lock screen, so a trail announces itself once.
+  if (message.trail_id && message.trail_step !== 1) return [];
+
   const [{ data: participants }, { data: conversation }, sender] = await Promise.all([
     supabase
       .from('conversation_participants')
@@ -123,9 +132,12 @@ async function forNewMessage(message: MessageRecord): Promise<ExpoMessage[]> {
   // A fenced message's text never goes on a lock screen: the reader is not at
   // the place yet. Same rule as notifyArrival in src/lib/notifications.ts.
   const isFenced = message.fence_latitude != null;
-  const body = isFenced
-    ? `Left you a message at ${message.fence_label || 'a place'}`
-    : truncate(message.body, PREVIEW_LENGTH);
+  const trail = message.trail_id ? await trailMeta(message.trail_id) : null;
+  const body = trail
+    ? `Left you a trail: ${trail.title}. Start at ${message.fence_label || 'the first stop'}`
+    : isFenced
+      ? `Left you a message at ${message.fence_label || 'a place'}`
+      : truncate(message.body, PREVIEW_LENGTH);
 
   return toExpoMessages(recipientIds, {
     title,
@@ -139,7 +151,7 @@ async function forUnlock(unlock: UnlockRecord): Promise<ExpoMessage[]> {
   const [{ data: message }, { data: finder }] = await Promise.all([
     supabase
       .from('messages')
-      .select('id, conversation_id, sender_id, fence_label')
+      .select('id, conversation_id, sender_id, fence_label, trail_id, trail_step')
       .eq('id', unlock.message_id)
       .maybeSingle(),
     supabase
@@ -153,6 +165,20 @@ async function forUnlock(unlock: UnlockRecord): Promise<ExpoMessage[]> {
   if (message.sender_id === unlock.user_id) return [];
   // The same rule RLS enforces for reads: opted out means the sender learns nothing.
   if (!finder.share_unlock_receipts) return [];
+
+  if (message.trail_id) {
+    const trail = await trailMeta(message.trail_id as string);
+    if (!trail) return [];
+    const step = message.trail_step as number;
+    const finished = step >= trail.step_count;
+    return toExpoMessages([message.sender_id as string], {
+      title: finished ? 'Trail finished 🎉' : 'Found it',
+      body: finished
+        ? `${finder.name} finished your trail ${trail.title}`
+        : `${finder.name} found stop ${step} of ${trail.step_count} on ${trail.title}`,
+      data: { conversationId: message.conversation_id, kind: finished ? 'trail_finished' : 'receipt' },
+    });
+  }
 
   const place = message.fence_label || 'the place you picked';
   return toExpoMessages([message.sender_id as string], {
@@ -200,6 +226,11 @@ async function forReaction(reaction: ReactionRecord): Promise<ExpoMessage[]> {
     body,
     data: { conversationId: message.conversation_id, kind: 'reaction' },
   });
+}
+
+async function trailMeta(id: string): Promise<{ title: string; step_count: number } | null> {
+  const { data } = await supabase.from('trails').select('title, step_count').eq('id', id).maybeSingle();
+  return (data as { title: string; step_count: number } | null) ?? null;
 }
 
 async function profileName(id: string): Promise<string> {

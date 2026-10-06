@@ -74,6 +74,7 @@ function RootNavigator() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="compose" options={{ presentation: 'modal' }} />
         <Stack.Screen name="people" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="trail-builder" options={{ presentation: 'modal' }} />
         <Stack.Screen name="map" />
         <Stack.Screen name="conversation/[id]" />
       </Stack.Protected>

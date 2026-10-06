@@ -1,5 +1,14 @@
 import { isReaction } from '@/data/reactions';
-import type { Conversation, FoundBy, Message, MessageReaction, Person } from '@/data/types';
+import type {
+  Conversation,
+  FoundBy,
+  Message,
+  MessageReaction,
+  Person,
+  Trail,
+  TrailInfo,
+  TrailRevealMode,
+} from '@/data/types';
 import type { Geofence } from '@/lib/geo';
 
 /**
@@ -28,6 +37,28 @@ export type MessageRowWithRefs = {
   sender: ProfileFields | null;
   unlocks: UnlockRowWithFinder[] | null;
   reactions?: ReactionRow[] | null;
+  trail_id?: string | null;
+  trail_step?: number | null;
+  next_clue?: string | null;
+  trail?: TrailRefRow | null;
+};
+
+type TrailRefRow = { id: string; title: string; reveal_mode: TrailRevealMode; step_count: number };
+
+export type TrailRowWithStops = {
+  id: string;
+  conversation_id: string;
+  created_by: string;
+  title: string;
+  reveal_mode: TrailRevealMode;
+  step_count: number;
+  created_at: string;
+  stops: {
+    id: string;
+    trail_step: number | null;
+    next_clue: string | null;
+    unlocks: { user_id: string; unlocked_at: string }[] | null;
+  }[];
 };
 
 export type ReactionRow = { user_id: string; emoji: string | null };
@@ -114,7 +145,44 @@ export function toMessage(row: MessageRowWithRefs, myId: string): Message {
     unlockedAt: toEpochMs(unlocks.find((u) => u.user_id === myId)?.unlocked_at),
     foundBy: isMine ? toFoundBy(unlocks, myId) : [],
     reactions: toReactions(row.reactions ?? []),
+    trail: toTrailInfo(row),
     status: 'sent',
+  };
+}
+
+function toTrailInfo(row: MessageRowWithRefs): TrailInfo | undefined {
+  if (!row.trail || row.trail_step == null) return undefined;
+  return {
+    id: row.trail.id,
+    title: row.trail.title,
+    step: row.trail_step,
+    total: row.trail.step_count,
+    revealMode: row.trail.reveal_mode,
+    nextClue: row.next_clue ?? undefined,
+  };
+}
+
+export function toTrail(row: TrailRowWithStops): Trail {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    creatorId: row.created_by,
+    title: row.title,
+    revealMode: row.reveal_mode,
+    total: row.step_count,
+    createdAt: toEpochMs(row.created_at) ?? 0,
+    stops: row.stops
+      .filter((s) => s.trail_step != null)
+      .map((s) => ({
+        messageId: s.id,
+        step: s.trail_step!,
+        nextClue: s.next_clue,
+        unlocks: (s.unlocks ?? []).map((u) => ({
+          personId: u.user_id,
+          at: toEpochMs(u.unlocked_at) ?? 0,
+        })),
+      }))
+      .sort((a, b) => a.step - b.step),
   };
 }
 

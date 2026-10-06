@@ -64,6 +64,7 @@ disagree, regenerate rather than editing either one by hand.
 | Script                       | What it does                                        |
 | ---------------------------- | --------------------------------------------------- |
 | `npm run db:test`            | Runs the RLS test suite (no Docker, no network)      |
+| `npm run db:test:push`       | Checks the live push pipeline with seed accounts     |
 | `npm run db:push`            | Applies local migrations to the linked project       |
 | `npm run db:pull`            | Writes a migration for schema changes made in the UI |
 | `npm run db:diff`            | Shows the SQL difference against the linked project  |
@@ -201,6 +202,29 @@ Two consequences for the client:
 - `unlocked_at` is set by trigger to the server clock, truncated to the minute.
   A receipt says which message was found, never a precise moment.
 
+### Trails
+
+A trail's stops are ordinary fenced messages with `trail_id` and `trail_step`
+set. A stop the viewer has not earned is not blanked; **the row is hidden**
+by the messages SELECT policy (`private.can_see_trail_step`). Stop 1 is always
+visible. In pin mode, stop N+1 appears once you have unlocked stop N. In clue
+mode it stays hidden until you unlock it yourself.
+
+Hiding the whole row means everything that reads messages inherits the rule
+without its own check: the thread, the inbox embed, the pending-fenced list
+the OS geofences are built from, and Realtime. The `trails` row (title, mode,
+`step_count`) is readable by everyone in the thread, which is what lets
+progress read "Stop 2 of 5".
+
+Clue-mode stops can only be unlocked through `check_in_trail_step`, because
+the device never has their coordinates. It compares the reported position
+server-side and allows 30 attempts per person per trail per hour, so it
+can't be scripted to sweep for the pin. The unlock INSERT policy also requires
+the message to be visible, so stops can't be unlocked out of order.
+
+Trails are created with the `create_trail` RPC: the trail and all its stops in
+one transaction, through RLS (`SECURITY INVOKER`).
+
 ## Push
 
 Remote push has three parts: devices register an Expo push token in
@@ -257,6 +281,8 @@ secret, and neither belongs in version control.
 | New open message | every other participant | sender, then a 140-character preview |
 | New fenced message | every other participant | "Left you a message at {place}". The body is **never** included. |
 | Unlock | the message's sender, if the finder shares receipts | "{name} found your message at {place}" |
+| New trail | every other participant, for stop 1 only | "Left you a trail: {title}. Start at {place}". Later stops never push, so their places stay secret. |
+| Trail stop found | the creator, if the finder shares receipts | "{name} found stop 2 of 5 on {title}", or "Trail finished" for the last stop |
 | Reaction | the message's author, unless they reacted themselves | "Reacted ❤️ to "…"", or "Reacted ❤️ to your message at {place}" for a fenced message |
 
 Reaction pushes are collapsed: the first reaction to an author pushes, and any
@@ -268,6 +294,11 @@ neither duplicates the finder's local arrival alert. Tokens that Expo reports as
 `DeviceNotRegistered` are deleted.
 
 Check the delivery logs under **Edge Functions → push → Logs** in the dashboard.
+
+`npm run db:test:push` checks every row of this table against the linked
+project without a phone. It gives the seed accounts fake Expo tokens: a pruned
+token means a push was attempted, and a surviving one means none was. It
+removes everything it writes.
 
 ### 3. EAS (the app side)
 

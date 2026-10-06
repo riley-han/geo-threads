@@ -15,10 +15,11 @@ import { GlassPanel } from '@/components/glass-panel';
 import { MessageInputBar } from '@/components/message-input-bar';
 import { AvatarDot } from '@/components/avatar-dot';
 import { MessageBubble } from '@/components/message-bubble';
+import { TrailCard } from '@/components/trail-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
-import type { Message } from '@/data/types';
+import type { Message, Trail } from '@/data/types';
 import { LocationPrimingSheet, type PrimingVariant } from '@/components/location-priming-sheet';
 import { useTheme } from '@/hooks/use-theme';
 import { isInsideFence, type Geofence } from '@/lib/geo';
@@ -26,16 +27,47 @@ import { openSystemSettings } from '@/lib/location-permissions';
 import { messageVisibility } from '@/lib/message-visibility';
 import { requestNotificationAccess } from '@/lib/notifications';
 import { registerPushToken } from '@/lib/push';
+import { trailProgress, type TrailProgress } from '@/lib/trail-progress';
+import { useAuth } from '@/store/auth-store';
 import { useLocation } from '@/store/location-store';
 import {
   conversationTitle,
   useConversation,
+  useConversationTrails,
   useMessageActions,
   useMessages,
 } from '@/store/messages-store';
 
 const RUN_GAP_MS = 30 * 60_000;
 const HEADER_HEIGHT = 52;
+
+type Row =
+  | { kind: 'message'; message: Message; index: number }
+  | { kind: 'trail'; trail: Trail; progress: TrailProgress };
+
+/**
+ * Messages, with each trail's card placed after its latest visible stop. That
+ * is where the trail "is" for this viewer: the next clue, the finish, or (for
+ * the creator) everyone's progress.
+ */
+function buildRows(messages: Message[], trails: Trail[], myId: string | null): Row[] {
+  const lastStop = new Map<string, number>();
+  messages.forEach((m, i) => {
+    if (m.trail) lastStop.set(m.trail.id, i);
+  });
+
+  const rows: Row[] = [];
+  messages.forEach((message, index) => {
+    rows.push({ kind: 'message', message, index });
+    if (!myId) return;
+    for (const trail of trails) {
+      if (lastStop.get(trail.id) === index) {
+        rows.push({ kind: 'trail', trail, progress: trailProgress(trail, myId) });
+      }
+    }
+  });
+  return rows;
+}
 
 function latestFenceIn(messages: Message[]): Geofence | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
@@ -52,6 +84,8 @@ export default function ConversationScreen() {
 
   const { conversation, state: conversationState } = useConversation(id);
   const { messages, state: messagesState, error: messagesError } = useMessages(id);
+  const trails = useConversationTrails(id);
+  const myId = useAuth().user?.id ?? null;
   const { sendMessage, markRead } = useMessageActions();
   const {
     position,
@@ -144,6 +178,27 @@ export default function ConversationScreen() {
     );
   }
 
+  const rows = buildRows(messages, trails, myId);
+  const nameOf = (personId: string) =>
+    participants.find((p) => p.id === personId)?.name ?? 'them';
+
+  const renderRow = ({ item: row }: { item: Row }) => {
+    if (row.kind === 'trail') {
+      return (
+        <TrailCard
+          trail={row.trail}
+          progress={row.progress}
+          participants={participants}
+          creatorName={nameOf(row.trail.creatorId)}
+          onMakeTrail={() =>
+            router.push({ pathname: '/trail-builder', params: { conversationId: id } })
+          }
+        />
+      );
+    }
+    return renderItem({ item: row.message, index: row.index });
+  };
+
   const renderItem = ({ item, index }: { item: Message; index: number }) => {
     const isMine = item.isMine;
     const next = messages[index + 1];
@@ -175,9 +230,9 @@ export default function ConversationScreen() {
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <FlatList
-          data={messages}
-          keyExtractor={(m) => m.id}
-          renderItem={renderItem}
+          data={rows}
+          keyExtractor={(row) => (row.kind === 'message' ? row.message.id : `trail-${row.trail.id}`)}
+          renderItem={renderRow}
           contentContainerStyle={{
             paddingTop: HEADER_HEIGHT + insets.top,
             paddingBottom: Spacing.three,
@@ -238,6 +293,9 @@ export default function ConversationScreen() {
               const { error } = await sendMessage(id, body, fence);
               return error == null;
             }}
+            onStartTrail={() =>
+              router.push({ pathname: '/trail-builder', params: { conversationId: id } })
+            }
           />
         </SafeAreaView>
       </KeyboardAvoidingView>

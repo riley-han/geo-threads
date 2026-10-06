@@ -17,9 +17,16 @@ type Props = {
   onSend: (body: string, fence?: Geofence) => void | boolean | Promise<void | boolean>;
   disabled?: boolean;
   placeholder?: string;
+  /** Shows a Trail button that opens the trail builder. */
+  onStartTrail?: () => void;
 };
 
-export function MessageInputBar({ onSend, disabled, placeholder = 'Message' }: Props) {
+export function MessageInputBar({
+  onSend,
+  disabled,
+  placeholder = 'Message',
+  onStartTrail,
+}: Props) {
   const theme = useTheme();
   const [body, setBody] = useState('');
   const [fence, setFence] = useState<Geofence | undefined>();
@@ -54,6 +61,19 @@ export function MessageInputBar({ onSend, disabled, placeholder = 'Message' }: P
             ]}>
             <ThemedText style={styles.fenceGlyph}>📍</ThemedText>
           </Pressable>
+
+          {onStartTrail ? (
+            <Pressable
+              onPress={onStartTrail}
+              hitSlop={6}
+              accessibilityRole="button"
+              accessibilityLabel="Make a trail"
+              style={[styles.trailButton, { backgroundColor: theme.backgroundSelected }]}>
+              <ThemedText type="caption" style={styles.trailText}>
+                Trail
+              </ThemedText>
+            </Pressable>
+          ) : null}
 
           <TextInput
             value={body}
@@ -119,6 +139,16 @@ const styles = StyleSheet.create({
   },
   fenceGlyph: {
     fontSize: 16,
+  },
+  trailButton: {
+    height: 34,
+    paddingHorizontal: Spacing.two + 2,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trailText: {
+    fontFamily: Fonts.bodyBold,
   },
   input: {
     flex: 1,
