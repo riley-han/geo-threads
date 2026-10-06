@@ -225,6 +225,24 @@ the message to be visible, so stops can't be unlocked out of order.
 Trails are created with the `create_trail` RPC: the trail and all its stops in
 one transaction, through RLS (`SECURITY INVOKER`).
 
+**Time windows.** A stop may have `opens_at` and `closes_at`. These are
+absolute moments, so there is no time zone to store, and each viewer sees them
+in their local time. The unlock policy and `check_in_trail_step` compare them
+with the server clock, so a skewed phone can't open a stop early. A check-in at
+the right place and the wrong time returns `not_open` or `closed`. The distance
+is checked first, so the time is only revealed to someone standing there.
+
+**Hints.** In clue mode the creator can set `hint_after_minutes`.
+`use_trail_hint` writes a `trail_hints` row once you've been stuck that long
+since finding the previous stop, and the visibility rule then admits that stop
+for you. Its pin appears and it unlocks like a pin-mode stop. The creator can
+read who used hints.
+
+**Finishing order.** `trail_finishers` (definer) returns the people who
+unlocked the last stop, ranked. Anyone in the thread can call it. Finishers who
+turned off receipts are left out of everyone's view but their own, and ranks
+are counted among the people shown, so they leave no gap.
+
 ## Push
 
 Remote push has three parts: devices register an Expo push token in

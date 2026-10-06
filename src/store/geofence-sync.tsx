@@ -5,6 +5,7 @@ import { fenceKey } from '@/data/types';
 import type { Message } from '@/data/types';
 import { distanceMeters, type Geofence, type LatLng } from '@/lib/geo';
 import { GEOFENCE_TASK } from '@/lib/geofence-task';
+import { isWithinWindow } from '@/lib/message-visibility';
 import { useAuth } from '@/store/auth-store';
 import { useLocation } from '@/store/location-store';
 import { useInboxState, usePendingFencedMessages } from '@/store/messages-store';
@@ -16,7 +17,10 @@ const MAX_REGIONS = 20;
 function regionsFor(messages: Message[], position: LatLng | null): Location.LocationRegion[] {
   const byKey = new Map<string, Geofence>();
   for (const m of messages) {
-    if (m.fence) byKey.set(fenceKey(m.fence), m.fence);
+    // A stop outside its time window cannot be unlocked, so an arrival alert
+    // for it would be a false promise. It rejoins on the next refresh after
+    // it opens.
+    if (m.fence && isWithinWindow(m)) byKey.set(fenceKey(m.fence), m.fence);
   }
 
   const fences = [...byKey.entries()];

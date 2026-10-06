@@ -14,11 +14,13 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { DateTimeField } from '@/components/date-time-field';
 import { FenceChip } from '@/components/fence-chip';
 import { FencePicker } from '@/components/fence-picker';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
+import { TRAIL_TEMPLATES, type TrailTemplate } from '@/data/trail-templates';
 import type { TrailRevealMode } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { formatRadius, type Geofence } from '@/lib/geo';
@@ -28,7 +30,18 @@ import { useConversation, useMessageActions } from '@/store/messages-store';
 const MIN_STOPS = 2;
 const MAX_STOPS = 10;
 
-type StopDraft = { key: string; fence?: Geofence; body: string; nextClue: string };
+type StopDraft = {
+  key: string;
+  fence?: Geofence;
+  body: string;
+  nextClue: string;
+  opensAt: Date | null;
+  closesAt: Date | null;
+  /** From a template: placeholders and a tip, never text the creator didn't write. */
+  bodyPrompt?: string;
+  cluePrompt?: string;
+  timeTip?: string;
+};
 
 const MODES: { value: TrailRevealMode; label: string; detail: string }[] = [
   {
@@ -43,8 +56,30 @@ const MODES: { value: TrailRevealMode; label: string; detail: string }[] = [
   },
 ];
 
+/** Choices for how long a clue-mode finder must be stuck before a hint. */
+const HINT_DELAYS: { minutes: number | null; label: string }[] = [
+  { minutes: null, label: 'Never' },
+  { minutes: 60, label: '1 h' },
+  { minutes: 360, label: '6 h' },
+  { minutes: 1440, label: '24 h' },
+];
+
 let nextKey = 0;
-const blankStop = (): StopDraft => ({ key: `stop-${nextKey++}`, body: '', nextClue: '' });
+const blankStop = (prompts: Partial<StopDraft> = {}): StopDraft => ({
+  key: `stop-${nextKey++}`,
+  body: '',
+  nextClue: '',
+  opensAt: null,
+  closesAt: null,
+  ...prompts,
+});
+
+/** A starting time for a new window: the next whole hour, tomorrow. */
+const tomorrowOnTheHour = () => {
+  const d = new Date(Date.now() + 86_400_000);
+  d.setMinutes(0, 0, 0);
+  return d;
+};
 
 /**
  * Builds a trail: an ordered set of places, each with a note to find there and
@@ -63,6 +98,7 @@ export default function TrailBuilderScreen() {
 
   const [title, setTitle] = useState('');
   const [mode, setMode] = useState<TrailRevealMode>('pin');
+  const [hintAfter, setHintAfter] = useState<number | null>(1440);
   const [stops, setStops] = useState<StopDraft[]>(() => [blankStop(), blankStop()]);
   const [pickingFor, setPickingFor] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -72,6 +108,17 @@ export default function TrailBuilderScreen() {
 
   const remove = (key: string) => setStops((prev) => prev.filter((s) => s.key !== key));
 
+  // Templates are offered only before anything has been entered, so choosing
+  // one can never overwrite someone's work.
+  const pristine = !title.trim() && stops.every((s) => !s.fence && !s.body.trim() && !s.nextClue.trim());
+
+  const applyTemplate = (t: TrailTemplate) => {
+    setTitle(t.title);
+    setMode(t.revealMode);
+    setHintAfter(t.hintAfterMinutes ?? (t.revealMode === 'clue' ? 1440 : null));
+    setStops(t.stops.map((p) => blankStop(p)));
+  };
+
   /** The first thing stopping a send, in the order a person would fix it. */
   const problem = (): string | null => {
     if (!title.trim()) return 'Give the trail a name.';
@@ -80,6 +127,12 @@ export default function TrailBuilderScreen() {
       if (!s.body.trim()) return `Write what they find at stop ${i + 1}.`;
       if (mode === 'clue' && i < stops.length - 1 && !s.nextClue.trim()) {
         return `Write a clue from stop ${i + 1} to stop ${i + 2}.`;
+      }
+      if (s.opensAt && s.closesAt && s.closesAt <= s.opensAt) {
+        return `Stop ${i + 1} closes before it opens.`;
+      }
+      if (s.closesAt && s.closesAt.getTime() <= Date.now()) {
+        return `Stop ${i + 1} would already be closed.`;
       }
     }
     return null;
@@ -98,11 +151,14 @@ export default function TrailBuilderScreen() {
       conversationId,
       title: title.trim(),
       revealMode: mode,
+      hintAfterMinutes: mode === 'clue' ? hintAfter : null,
       stops: stops.map((s, i) => ({
         fence: s.fence!,
         body: s.body.trim(),
         // The last stop has nowhere to point; the server ignores it anyway.
         nextClue: i < stops.length - 1 ? s.nextClue.trim() : '',
+        opensAt: s.opensAt,
+        closesAt: s.closesAt,
       })),
     });
     setSending(false);
@@ -137,6 +193,25 @@ export default function TrailBuilderScreen() {
           style={styles.root}
           behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
           <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+            {pristine ? (
+              <View style={styles.section}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Start from a template
+                </ThemedText>
+                <View style={styles.templateRow}>
+                  {TRAIL_TEMPLATES.map((t) => (
+                    <Pressable
+                      key={t.id}
+                      onPress={() => applyTemplate(t)}
+                      accessibilityHint={t.description}
+                      style={[styles.templateChip, { backgroundColor: theme.backgroundSelected }]}>
+                      <ThemedText type="small">{t.name}</ThemedText>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
+
             <TextInput
               value={title}
               onChangeText={setTitle}
@@ -181,6 +256,35 @@ export default function TrailBuilderScreen() {
               </ThemedText>
             </View>
 
+            {mode === 'clue' ? (
+              <View style={styles.section}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Offer the pin to someone stuck for
+                </ThemedText>
+                <View
+                  accessibilityRole="radiogroup"
+                  style={[styles.track, { backgroundColor: theme.backgroundSelected }]}>
+                  {HINT_DELAYS.map((d) => {
+                    const selected = d.minutes === hintAfter;
+                    return (
+                      <Pressable
+                        key={d.label}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected }}
+                        onPress={() => setHintAfter(d.minutes)}
+                        style={[styles.segment, selected && { backgroundColor: theme.primary }]}>
+                        <ThemedText
+                          type={selected ? 'smallBold' : 'small'}
+                          style={{ color: selected ? theme.onPrimary : theme.textSecondary }}>
+                          {d.label}
+                        </ThemedText>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ) : null}
+
             {stops.map((s, i) => {
               const last = i === stops.length - 1;
               return (
@@ -216,7 +320,7 @@ export default function TrailBuilderScreen() {
                   <TextInput
                     value={s.body}
                     onChangeText={(t) => update(s.key, { body: t })}
-                    placeholder="What they find here"
+                    placeholder={s.bodyPrompt ?? 'What they find here'}
                     placeholderTextColor={theme.textSecondary}
                     multiline
                     maxLength={4000}
@@ -231,9 +335,10 @@ export default function TrailBuilderScreen() {
                       value={s.nextClue}
                       onChangeText={(t) => update(s.key, { nextClue: t })}
                       placeholder={
-                        mode === 'clue'
+                        s.cluePrompt ??
+                        (mode === 'clue'
                           ? `Clue to stop ${i + 2}`
-                          : `Clue to stop ${i + 2} (optional)`
+                          : `Clue to stop ${i + 2} (optional)`)
                       }
                       placeholderTextColor={theme.textSecondary}
                       maxLength={280}
@@ -243,6 +348,29 @@ export default function TrailBuilderScreen() {
                       ]}
                     />
                   ) : null}
+
+                  {s.timeTip && !s.opensAt ? (
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {s.timeTip}
+                    </ThemedText>
+                  ) : null}
+                  <DateTimeField
+                    label="Opens"
+                    setLabel="Set an opening time"
+                    value={s.opensAt}
+                    onChange={(d) => update(s.key, { opensAt: d })}
+                    suggest={tomorrowOnTheHour}
+                  />
+                  <DateTimeField
+                    label="Closes"
+                    setLabel="Set a closing time"
+                    value={s.closesAt}
+                    onChange={(d) => update(s.key, { closesAt: d })}
+                    suggest={() =>
+                      new Date((s.opensAt ?? tomorrowOnTheHour()).getTime() + 3 * 3_600_000)
+                    }
+                    minimumDate={s.opensAt ?? new Date()}
+                  />
                 </View>
               );
             })}
@@ -345,6 +473,16 @@ const styles = StyleSheet.create({
     paddingVertical: Spacing.two + 2,
     borderRadius: Radius.medium,
     maxHeight: 140,
+  },
+  templateRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Spacing.two,
+  },
+  templateChip: {
+    paddingHorizontal: Spacing.three,
+    paddingVertical: Spacing.two,
+    borderRadius: Radius.pill,
   },
   addStop: {
     alignItems: 'center',

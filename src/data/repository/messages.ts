@@ -23,7 +23,7 @@ const MESSAGE_SELECT = `
     finder:profiles!message_unlocks_user_id_fkey ( id, name, handle, avatar_url )
   ),
   reactions:message_reactions ( user_id, emoji ),
-  trail_id, trail_step, next_clue,
+  trail_id, trail_step, next_clue, opens_at, closes_at,
   trail:trails!messages_trail_id_fkey ( id, title, reveal_mode, step_count )
 `;
 

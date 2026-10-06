@@ -199,6 +199,7 @@ export type Database = {
       messages: {
         Row: {
           body: string
+          closes_at: string | null
           conversation_id: string
           fence_key: string | null
           fence_label: string | null
@@ -207,6 +208,7 @@ export type Database = {
           fence_radius_meters: number | null
           id: string
           next_clue: string | null
+          opens_at: string | null
           sender_id: string
           sent_at: string
           trail_id: string | null
@@ -214,6 +216,7 @@ export type Database = {
         }
         Insert: {
           body: string
+          closes_at?: string | null
           conversation_id: string
           fence_key?: string | null
           fence_label?: string | null
@@ -222,6 +225,7 @@ export type Database = {
           fence_radius_meters?: number | null
           id?: string
           next_clue?: string | null
+          opens_at?: string | null
           sender_id: string
           sent_at?: string
           trail_id?: string | null
@@ -229,6 +233,7 @@ export type Database = {
         }
         Update: {
           body?: string
+          closes_at?: string | null
           conversation_id?: string
           fence_key?: string | null
           fence_label?: string | null
@@ -237,6 +242,7 @@ export type Database = {
           fence_radius_meters?: number | null
           id?: string
           next_clue?: string | null
+          opens_at?: string | null
           sender_id?: string
           sent_at?: string
           trail_id?: string | null
@@ -390,11 +396,48 @@ export type Database = {
           },
         ]
       }
+      trail_hints: {
+        Row: {
+          step: number
+          trail_id: string
+          used_at: string
+          user_id: string
+        }
+        Insert: {
+          step: number
+          trail_id: string
+          used_at?: string
+          user_id: string
+        }
+        Update: {
+          step?: number
+          trail_id?: string
+          used_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trail_hints_trail_id_fkey"
+            columns: ["trail_id"]
+            isOneToOne: false
+            referencedRelation: "trails"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trail_hints_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       trails: {
         Row: {
           conversation_id: string
           created_at: string
           created_by: string
+          hint_after_minutes: number | null
           id: string
           reveal_mode: Database["public"]["Enums"]["trail_reveal_mode"]
           step_count: number
@@ -404,6 +447,7 @@ export type Database = {
           conversation_id: string
           created_at?: string
           created_by: string
+          hint_after_minutes?: number | null
           id?: string
           reveal_mode?: Database["public"]["Enums"]["trail_reveal_mode"]
           step_count: number
@@ -413,6 +457,7 @@ export type Database = {
           conversation_id?: string
           created_at?: string
           created_by?: string
+          hint_after_minutes?: number | null
           id?: string
           reveal_mode?: Database["public"]["Enums"]["trail_reveal_mode"]
           step_count?: number
@@ -464,6 +509,7 @@ export type Database = {
       create_trail: {
         Args: {
           p_conversation_id: string
+          p_hint_after_minutes?: number
           p_reveal_mode: Database["public"]["Enums"]["trail_reveal_mode"]
           p_stops: Json
           p_title: string
@@ -473,6 +519,18 @@ export type Database = {
       register_push_token: {
         Args: { p_platform: string; p_token: string }
         Returns: undefined
+      }
+      trail_finishers: {
+        Args: { p_trail_id: string }
+        Returns: {
+          finished_at: string
+          place: number
+          user_id: string
+        }[]
+      }
+      use_trail_hint: {
+        Args: { p_step: number; p_trail_id: string }
+        Returns: string
       }
     }
     Enums: {

@@ -12,6 +12,7 @@ import { DEFAULT_POSITION } from '@/data/places';
 import type { Message, Trail } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { formatDistance, type Geofence } from '@/lib/geo';
+import { formatMoment } from '@/lib/format-moment';
 import { messageVisibility } from '@/lib/message-visibility';
 import { trailProgress } from '@/lib/trail-progress';
 import { useAuth } from '@/store/auth-store';
@@ -31,6 +32,9 @@ type WaitingItem = {
   fence: Geofence;
   distanceMeters: number;
 };
+
+/** A trail stop you have earned whose window has not opened yet. */
+type ScheduledItem = { message: Message; fence: Geofence; opensAt: number };
 
 /** A clue-mode trail stop: no pin to measure to, just the clue. */
 type ClueItem = { trail: Trail; step: number; clue: string | null };
@@ -60,6 +64,14 @@ export default function HomeScreen() {
     })
     .filter((x): x is WaitingItem => x !== null)
     .sort((a, b) => a.distanceMeters - b.distanceMeters);
+
+  const scheduled: ScheduledItem[] = pendingFenced
+    .map((message) => {
+      const v = messageVisibility(message, position);
+      return v.kind === 'scheduled' ? { message, fence: v.fence, opensAt: v.opensAt } : null;
+    })
+    .filter((x): x is ScheduledItem => x !== null)
+    .sort((a, b) => a.opensAt - b.opensAt);
 
   const clues: ClueItem[] = [];
   if (profile) {
@@ -120,7 +132,7 @@ export default function HomeScreen() {
         </Pressable>
 
         <Section title="Waiting for you">
-          {waiting.length === 0 && clues.length === 0 ? (
+          {waiting.length === 0 && clues.length === 0 && scheduled.length === 0 ? (
             <View style={[styles.empty, { backgroundColor: theme.backgroundElement }]}>
               {inboxLoading ? (
                 <ActivityIndicator />
@@ -170,6 +182,37 @@ export default function HomeScreen() {
                 </View>
                 <ThemedText type="small" style={[styles.rowDistance, { color: theme.accentText }]}>
                   {formatDistance(distanceMeters)}
+                </ThemedText>
+              </Pressable>
+            ))}
+            {scheduled.slice(0, 4).map(({ message, fence, opensAt }) => (
+              <Pressable
+                key={message.id}
+                onPress={() =>
+                  router.push({
+                    pathname: '/conversation/[id]',
+                    params: { id: message.conversationId },
+                  })
+                }
+                style={({ pressed }) => [
+                  styles.row,
+                  { backgroundColor: theme.backgroundElement },
+                  pressed && { opacity: 0.8 },
+                ]}>
+                <View style={[styles.rowGlyphTile, { backgroundColor: theme.backgroundSelected }]}>
+                  <ThemedText style={styles.rowGlyph}>🔒</ThemedText>
+                </View>
+                <View style={styles.rowBody}>
+                  <ThemedText type="default" numberOfLines={1}>
+                    {message.sender.name}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                    {message.trail ? `${message.trail.title} · ` : ''}
+                    {fence.label}
+                  </ThemedText>
+                </View>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Opens {formatMoment(opensAt)}
                 </ThemedText>
               </Pressable>
             ))}

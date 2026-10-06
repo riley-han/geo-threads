@@ -42,6 +42,12 @@ export type Message = {
   reactions: MessageReaction[];
   /** Set when this message is one stop of a trail. */
   trail?: TrailInfo;
+  /**
+   * A trail stop's time window, epoch ms. Before opensAt it cannot be
+   * unlocked; after closesAt it no longer can. Enforced by the server clock.
+   */
+  opensAt: number | null;
+  closesAt: number | null;
   /** 'sending' until the insert lands, so an optimistic row is distinguishable. */
   status: 'sent' | 'sending' | 'failed';
 };
@@ -78,8 +84,15 @@ export type Trail = {
   revealMode: TrailRevealMode;
   total: number;
   createdAt: number;
+  /** Clue mode: minutes stuck before the next pin can be revealed. Null: no hints. */
+  hintAfterMinutes: number | null;
+  /** Hints used: your own, or (on your trail) everyone's. */
+  hints: { personId: string; step: number }[];
   stops: TrailStop[];
 };
+
+/** A finisher in the order everyone in the thread sees. Ties share a place. */
+export type TrailFinisher = { personId: string; finishedAt: number; place: number };
 
 export type TrailStop = {
   messageId: string;
@@ -94,6 +107,8 @@ export type TrailStopDraft = {
   fence: Geofence;
   body: string;
   nextClue: string;
+  opensAt: Date | null;
+  closesAt: Date | null;
 };
 
 export type Conversation = {
