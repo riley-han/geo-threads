@@ -9,13 +9,19 @@ import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { BottomTabInset, Fonts, Radius, Spacing } from '@/constants/theme';
 import { DEFAULT_POSITION } from '@/data/places';
-import type { Message } from '@/data/types';
+import type { Message, Trail } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { formatDistance, type Geofence } from '@/lib/geo';
 import { messageVisibility } from '@/lib/message-visibility';
+import { trailProgress } from '@/lib/trail-progress';
 import { useAuth } from '@/store/auth-store';
 import { useCurrentPosition } from '@/store/location-store';
-import { useConversations, useInboxState, usePendingFencedMessages } from '@/store/messages-store';
+import {
+  useConversations,
+  useInboxState,
+  usePendingFencedMessages,
+  useTrails,
+} from '@/store/messages-store';
 import { useFriends, usePendingRequests, useSocialState } from '@/store/social-store';
 
 const MAP_HEIGHT = 200;
@@ -25,6 +31,9 @@ type WaitingItem = {
   fence: Geofence;
   distanceMeters: number;
 };
+
+/** A clue-mode trail stop: no pin to measure to, just the clue. */
+type ClueItem = { trail: Trail; step: number; clue: string | null };
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -37,6 +46,7 @@ export default function HomeScreen() {
   const requests = usePendingRequests();
   const { state: inboxState } = useInboxState();
   const { state: socialState } = useSocialState();
+  const trails = useTrails();
 
   const inboxLoading = inboxState === 'loading' || inboxState === 'idle';
   const socialLoading = socialState === 'loading' || socialState === 'idle';
@@ -50,6 +60,20 @@ export default function HomeScreen() {
     })
     .filter((x): x is WaitingItem => x !== null)
     .sort((a, b) => a.distanceMeters - b.distanceMeters);
+
+  const clues: ClueItem[] = [];
+  if (profile) {
+    for (const trail of trails) {
+      const p = trailProgress(trail, profile.id);
+      if (p.kind === 'finder' && p.next && !p.next.visible) {
+        clues.push({ trail, step: p.next.step, clue: p.next.clue });
+      }
+    }
+  }
+  const creatorName = (trail: Trail) =>
+    conversations
+      .find((c) => c.id === trail.conversationId)
+      ?.participants.find((p) => p.id === trail.creatorId)?.name ?? 'A friend';
 
   const recent = conversations.slice(0, 3);
 
@@ -96,7 +120,7 @@ export default function HomeScreen() {
         </Pressable>
 
         <Section title="Waiting for you">
-          {waiting.length === 0 ? (
+          {waiting.length === 0 && clues.length === 0 ? (
             <View style={[styles.empty, { backgroundColor: theme.backgroundElement }]}>
               {inboxLoading ? (
                 <ActivityIndicator />
@@ -118,7 +142,8 @@ export default function HomeScreen() {
               )}
             </View>
           ) : (
-            waiting.slice(0, 4).map(({ message, fence, distanceMeters }) => (
+            <>
+            {waiting.slice(0, 4).map(({ message, fence, distanceMeters }) => (
               <Pressable
                 key={message.id}
                 onPress={() =>
@@ -147,7 +172,38 @@ export default function HomeScreen() {
                   {formatDistance(distanceMeters)}
                 </ThemedText>
               </Pressable>
-            ))
+            ))}
+            {clues.slice(0, 4).map(({ trail, step, clue }) => (
+              <Pressable
+                key={`${trail.id}-${step}`}
+                onPress={() =>
+                  router.push({
+                    pathname: '/conversation/[id]',
+                    params: { id: trail.conversationId },
+                  })
+                }
+                style={({ pressed }) => [
+                  styles.row,
+                  { backgroundColor: theme.backgroundElement },
+                  pressed && { opacity: 0.8 },
+                ]}>
+                <View style={[styles.rowGlyphTile, { backgroundColor: theme.backgroundSelected }]}>
+                  <ThemedText style={styles.rowGlyph}>🔒</ThemedText>
+                </View>
+                <View style={styles.rowBody}>
+                  <ThemedText type="default" numberOfLines={1}>
+                    {creatorName(trail)} · {trail.title}
+                  </ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary" numberOfLines={2}>
+                    {clue ?? 'Find the next stop.'}
+                  </ThemedText>
+                </View>
+                <ThemedText type="small" themeColor="textSecondary">
+                  {step} of {trail.total}
+                </ThemedText>
+              </Pressable>
+            ))}
+            </>
           )}
         </Section>
 

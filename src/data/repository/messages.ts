@@ -22,7 +22,9 @@ const MESSAGE_SELECT = `
     user_id, unlocked_at,
     finder:profiles!message_unlocks_user_id_fkey ( id, name, handle, avatar_url )
   ),
-  reactions:message_reactions ( user_id, emoji )
+  reactions:message_reactions ( user_id, emoji ),
+  trail_id, trail_step, next_clue,
+  trail:trails!messages_trail_id_fkey ( id, title, reveal_mode, step_count )
 `;
 
 export async function fetchMessages(
@@ -182,6 +184,9 @@ export function messageFromRealtimeRow(
       // any unlock already known locally.
       unlocks: [],
       reactions: [],
+      // A realtime row has no embedded trail. Trail rows are refetched rather
+      // than mapped from realtime (see onRemoteMessage), so none arrive here.
+      trail: null,
     },
     myId,
   );

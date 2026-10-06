@@ -40,6 +40,8 @@ export type Message = {
   foundBy: FoundBy[];
   /** Current reactions, one per person at most. Removed reactions are absent. */
   reactions: MessageReaction[];
+  /** Set when this message is one stop of a trail. */
+  trail?: TrailInfo;
   /** 'sending' until the insert lands, so an optimistic row is distinguishable. */
   status: 'sent' | 'sending' | 'failed';
 };
@@ -48,6 +50,51 @@ export type Message = {
 export type FoundBy = { person: Person; at: number };
 
 export type MessageReaction = { emoji: Reaction; personId: string };
+
+export type TrailRevealMode = 'pin' | 'clue';
+
+/** A stop's place in its trail, carried on the stop's Message. */
+export type TrailInfo = {
+  id: string;
+  title: string;
+  /** 1-based. */
+  step: number;
+  total: number;
+  revealMode: TrailRevealMode;
+  /** The way to the next stop. Never set on the last stop. */
+  nextClue?: string;
+};
+
+/**
+ * A trail as this viewer can see it. `stops` holds only the stops RLS returns:
+ * every stop for the creator, and for anyone else stop 1 plus each stop they
+ * have earned. A hidden stop is simply absent, never a placeholder.
+ */
+export type Trail = {
+  id: string;
+  conversationId: string;
+  creatorId: string;
+  title: string;
+  revealMode: TrailRevealMode;
+  total: number;
+  createdAt: number;
+  stops: TrailStop[];
+};
+
+export type TrailStop = {
+  messageId: string;
+  step: number;
+  nextClue: string | null;
+  /** Your own unlock, plus (on your trail) finders who share receipts. */
+  unlocks: { personId: string; at: number }[];
+};
+
+/** One stop as entered in the trail builder, before it is sent. */
+export type TrailStopDraft = {
+  fence: Geofence;
+  body: string;
+  nextClue: string;
+};
 
 export type Conversation = {
   id: string;

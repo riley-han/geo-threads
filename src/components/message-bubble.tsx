@@ -75,6 +75,12 @@ export function MessageBubble({
         </ThemedText>
       ) : null}
 
+      {message.trail ? (
+        <ThemedText type="caption" themeColor="textSecondary" style={styles.trailLabel}>
+          {message.trail.title} · Stop {message.trail.step} of {message.trail.total}
+        </ThemedText>
+      ) : null}
+
       {visibility.kind === 'unlockable' ? (
         <Pressable
           onPress={() => {
@@ -183,6 +189,11 @@ const styles = StyleSheet.create({
   },
   rowTheirs: {
     alignItems: 'flex-start',
+  },
+  trailLabel: {
+    marginTop: Spacing.two,
+    marginBottom: 2,
+    marginHorizontal: Spacing.two,
   },
   senderName: {
     marginLeft: Spacing.three,

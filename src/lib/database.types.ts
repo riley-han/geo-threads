@@ -206,8 +206,11 @@ export type Database = {
           fence_longitude: number | null
           fence_radius_meters: number | null
           id: string
+          next_clue: string | null
           sender_id: string
           sent_at: string
+          trail_id: string | null
+          trail_step: number | null
         }
         Insert: {
           body: string
@@ -218,8 +221,11 @@ export type Database = {
           fence_longitude?: number | null
           fence_radius_meters?: number | null
           id?: string
+          next_clue?: string | null
           sender_id: string
           sent_at?: string
+          trail_id?: string | null
+          trail_step?: number | null
         }
         Update: {
           body?: string
@@ -230,8 +236,11 @@ export type Database = {
           fence_longitude?: number | null
           fence_radius_meters?: number | null
           id?: string
+          next_clue?: string | null
           sender_id?: string
           sent_at?: string
+          trail_id?: string | null
+          trail_step?: number | null
         }
         Relationships: [
           {
@@ -246,6 +255,13 @@ export type Database = {
             columns: ["sender_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "messages_trail_id_fkey"
+            columns: ["trail_id"]
+            isOneToOne: false
+            referencedRelation: "trails"
             referencedColumns: ["id"]
           },
         ]
@@ -338,11 +354,101 @@ export type Database = {
           },
         ]
       }
+      trail_check_ins: {
+        Row: {
+          created_at: string
+          id: number
+          trail_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: never
+          trail_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: never
+          trail_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trail_check_ins_trail_id_fkey"
+            columns: ["trail_id"]
+            isOneToOne: false
+            referencedRelation: "trails"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trail_check_ins_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      trails: {
+        Row: {
+          conversation_id: string
+          created_at: string
+          created_by: string
+          id: string
+          reveal_mode: Database["public"]["Enums"]["trail_reveal_mode"]
+          step_count: number
+          title: string
+        }
+        Insert: {
+          conversation_id: string
+          created_at?: string
+          created_by: string
+          id?: string
+          reveal_mode?: Database["public"]["Enums"]["trail_reveal_mode"]
+          step_count: number
+          title: string
+        }
+        Update: {
+          conversation_id?: string
+          created_at?: string
+          created_by?: string
+          id?: string
+          reveal_mode?: Database["public"]["Enums"]["trail_reveal_mode"]
+          step_count?: number
+          title?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "trails_conversation_id_fkey"
+            columns: ["conversation_id"]
+            isOneToOne: false
+            referencedRelation: "conversations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "trails_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
+      check_in_trail_step: {
+        Args: {
+          p_latitude: number
+          p_longitude: number
+          p_step: number
+          p_trail_id: string
+        }
+        Returns: string
+      }
       claim_push_slot: {
         Args: {
           p_kind: string
@@ -355,6 +461,15 @@ export type Database = {
         Args: { p_participant_ids: string[]; p_title?: string }
         Returns: string
       }
+      create_trail: {
+        Args: {
+          p_conversation_id: string
+          p_reveal_mode: Database["public"]["Enums"]["trail_reveal_mode"]
+          p_stops: Json
+          p_title: string
+        }
+        Returns: string
+      }
       register_push_token: {
         Args: { p_platform: string; p_token: string }
         Returns: undefined
@@ -362,6 +477,7 @@ export type Database = {
     }
     Enums: {
       friendship_status: "pending" | "accepted"
+      trail_reveal_mode: "pin" | "clue"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -490,6 +606,7 @@ export const Constants = {
   public: {
     Enums: {
       friendship_status: ["pending", "accepted"],
+      trail_reveal_mode: ["pin", "clue"],
     },
   },
 } as const

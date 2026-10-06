@@ -52,6 +52,7 @@
     "web": "expo start --web",
     "lint": "expo lint",
     "db:test": "node supabase/tests/rls.test.mjs",
+    "db:test:push": "node --env-file=.env.local supabase/tests/push.e2e.mjs",
     "db:push": "supabase db push",
     "db:pull": "supabase db pull",
     "db:diff": "supabase db diff --schema public",

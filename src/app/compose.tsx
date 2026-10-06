@@ -54,6 +54,20 @@ export default function ComposeScreen() {
     setSelected((prev) => prev.filter((c) => c.id !== id));
   };
 
+  /** Opens (or reuses) the thread, then hands over to the trail builder. */
+  const startTrail = async () => {
+    if (selected.length === 0 || sending) return;
+    setSending(true);
+    const title = isGroup ? selected.map((c) => c.name.split(' ')[0]).join(', ') : undefined;
+    const { id, error } = await createConversation(selectedIds, title);
+    setSending(false);
+    if (!id) {
+      Alert.alert('Could not start the conversation', error ?? 'Please try again.');
+      return;
+    }
+    router.replace({ pathname: '/trail-builder', params: { conversationId: id, from: 'compose' } });
+  };
+
   const handleSend = async (body: string, fence?: Geofence): Promise<boolean> => {
     if (selected.length === 0 || sending) return false;
     setSending(true);
@@ -138,6 +152,9 @@ export default function ComposeScreen() {
                   ? `Group with ${selected.length} people. Add a geofence to lock your message to a place.`
                   : 'Add a geofence to lock your message to a place.'}
               </ThemedText>
+              <Pressable onPress={() => void startTrail()} disabled={sending} hitSlop={8}>
+                <ThemedText type="linkPrimary">Make it a trail</ThemedText>
+              </Pressable>
             </View>
           )}
 
@@ -197,6 +214,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingHorizontal: Spacing.six,
+    gap: Spacing.three,
   },
   hint: {
     textAlign: 'center',

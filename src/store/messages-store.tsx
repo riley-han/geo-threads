@@ -15,10 +15,18 @@ import { AppState, type AppStateStatus } from 'react-native';
 import * as repo from '@/data/repository';
 import { conversationTitle } from '@/data/repository';
 import { isReaction, type Reaction } from '@/data/reactions';
-import type { Conversation, Message, MessageReaction, Person } from '@/data/types';
+import type {
+  Conversation,
+  Message,
+  MessageReaction,
+  Person,
+  Trail,
+  TrailRevealMode,
+  TrailStopDraft,
+} from '@/data/types';
 import { fenceKey } from '@/data/types';
 import { clearMirror, mirrorOwner, replaceMirror, type MirroredMessage } from '@/db/fence-mirror';
-import type { Geofence } from '@/lib/geo';
+import type { Geofence, LatLng } from '@/lib/geo';
 import { useAuth } from '@/store/auth-store';
 
 export type LoadState = 'idle' | 'loading' | 'ready' | 'error';
@@ -28,9 +36,28 @@ export type CreateResult = { id: string | null; error: string | null };
 
 type Entry = { messages: Message[]; state: LoadState; error: string | null };
 
+export type CheckInOutcome = { result: repo.CheckInResult | null; error: string | null };
+
+type InboxFetch = {
+  convos: Awaited<ReturnType<typeof repo.fetchConversations>>;
+  fenced: Awaited<ReturnType<typeof repo.fetchPendingFenced>>;
+  trails: Awaited<ReturnType<typeof repo.fetchTrails>>;
+};
+
+/** Everything the inbox, Home and the geofences need, in one round of requests. */
+async function fetchInbox(myId: string): Promise<InboxFetch> {
+  const [convos, fenced, trails] = await Promise.all([
+    repo.fetchConversations(myId),
+    repo.fetchPendingFenced(myId),
+    repo.fetchTrails(),
+  ]);
+  return { convos, fenced, trails };
+}
+
 type MessagesApi = {
   conversations: Conversation[];
   pendingFenced: Message[];
+  trails: Trail[];
   inbox: { state: LoadState; error: string | null };
   entryFor: (conversationId: string) => Entry;
   refreshInbox: () => Promise<void>;
@@ -40,6 +67,14 @@ type MessagesApi = {
   unlockMessage: (messageId: string) => Promise<void>;
   /** Sets, changes or (with null) removes your reaction. */
   reactToMessage: (messageId: string, emoji: Reaction | null) => Promise<SendResult>;
+  createTrail: (args: {
+    conversationId: string;
+    title: string;
+    revealMode: TrailRevealMode;
+    stops: TrailStopDraft[];
+  }) => Promise<CreateResult>;
+  /** Unlock a trail stop by being there; the server compares the position. */
+  checkInTrailStep: (trailId: string, step: number, position: LatLng) => Promise<CheckInOutcome>;
   requestMessages: (conversationId: string) => void;
 };
 
@@ -56,6 +91,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
 
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [pendingFenced, setPendingFenced] = useState<Message[]>([]);
+  const [trails, setTrails] = useState<Trail[]>([]);
   // 'loading' from the start: the provider always fetches on mount, so saying so
   // up front avoids a synchronous setState inside the effect.
   const [inbox, setInbox] = useState<{ state: LoadState; error: string | null }>({
@@ -109,17 +145,15 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
    * awaited boundary rather than synchronously inside an effect body.
    */
   const applyInbox = useCallback(
-    (
-      ownerId: string,
-      convos: Awaited<ReturnType<typeof repo.fetchConversations>>,
-      fenced: Awaited<ReturnType<typeof repo.fetchPendingFenced>>,
-    ) => {
+    (ownerId: string, { convos, fenced, trails: trailResult }: InboxFetch) => {
       if (convos.error) {
         setInbox({ state: 'error', error: convos.error });
         return;
       }
       setConversations(convos.conversations);
       if (!fenced.error) applyPendingFenced(fenced.messages, ownerId);
+      // Trails are an extra: a failure here should not take out the inbox.
+      if (!trailResult.error) setTrails(trailResult.trails);
       setInbox({ state: 'ready', error: null });
     },
     [applyPendingFenced],
@@ -127,11 +161,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
 
   const loadInbox = useCallback(async () => {
     if (!myId) return;
-    const [convos, fenced] = await Promise.all([
-      repo.fetchConversations(myId),
-      repo.fetchPendingFenced(myId),
-    ]);
-    applyInbox(myId, convos, fenced);
+    applyInbox(myId, await fetchInbox(myId));
   }, [myId, applyInbox]);
 
   /** Manual retry: show the spinner, then reload. Never called from an effect body. */
@@ -153,11 +183,8 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     if (!myId) return;
     let active = true;
     void (async () => {
-      const [convos, fenced] = await Promise.all([
-        repo.fetchConversations(myId),
-        repo.fetchPendingFenced(myId),
-      ]);
-      if (active) applyInbox(myId, convos, fenced);
+      const result = await fetchInbox(myId);
+      if (active) applyInbox(myId, result);
     })();
     return () => {
       active = false;
@@ -257,6 +284,14 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       const conversationId = row.conversation_id as string;
       const entry = entriesRef.current.get(conversationId);
 
+      // A trail stop needs its trail embedded, which a realtime row lacks, so
+      // refetch instead of mapping it. Only stops this viewer may see arrive.
+      if (row.trail_id) {
+        if (entry && entry.state !== 'idle') void loadMessages(conversationId);
+        void loadInbox();
+        return;
+      }
+
       // Only splice into a thread already fetched in full. Inserting into an
       // idle one would mark it loaded with a single message in it.
       if (entry && entry.state === 'ready') {
@@ -271,8 +306,17 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       // Previews, unread state and pendingFenced (and so the geofences).
       void loadInbox();
     },
-    [myId, upsertMessage, loadInbox],
+    [myId, upsertMessage, loadInbox, loadMessages],
   );
+
+  /** The cached message with this id, wherever it is. */
+  const findCached = useCallback((messageId: string): Message | undefined => {
+    for (const entry of entriesRef.current.values()) {
+      const hit = entry.messages.find((m) => m.id === messageId);
+      if (hit) return hit;
+    }
+    return undefined;
+  }, []);
 
   const onRemoteUnlock = useCallback(
     async (row: Record<string, unknown>) => {
@@ -281,12 +325,19 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       const finderId = row.user_id as string;
       const at = repo.toEpochMs(row.unlocked_at as string) ?? Date.now();
 
+      const cached = findCached(messageId);
+
       if (finderId === myId) {
         // This account unlocked it, possibly on another device.
         patchMessage(messageId, (m) => (m.unlockedAt == null ? { ...m, unlockedAt: at } : m));
+        // A trail's next stop may just have become visible.
+        if (cached?.trail) void loadMessages(cached.conversationId);
         void loadInbox();
         return;
       }
+
+      // Someone found a stop on your trail: refresh per-person progress.
+      if (cached?.trail) void loadInbox();
 
       const finder: Person | null = await repo.fetchProfile(finderId);
       if (!finder) return;
@@ -296,7 +347,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
           : { ...m, foundBy: [...m.foundBy, { person: finder, at }].sort((a, b) => a.at - b.at) },
       );
     },
-    [myId, patchMessage, loadInbox],
+    [myId, patchMessage, loadInbox, loadMessages, findCached],
   );
 
   const onRemoteReaction = useCallback(
@@ -434,10 +485,50 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         myId,
       );
 
+      const unlocked = findCached(messageId) ?? pendingFenced.find((m) => m.id === messageId);
       const { error } = await repo.unlockMessage(messageId, myId);
-      if (error) void loadInbox();
+      if (error) {
+        void loadInbox();
+      } else if (unlocked?.trail) {
+        // In pin mode the next stop is now visible: fetch it, its pin, and
+        // (through pendingFenced) its geofence.
+        void loadMessages(unlocked.conversationId);
+        void loadInbox();
+      }
     },
-    [myId, pendingFenced, applyPendingFenced, loadInbox],
+    [myId, pendingFenced, applyPendingFenced, loadInbox, loadMessages, findCached],
+  );
+
+  const createTrail = useCallback(
+    async (args: {
+      conversationId: string;
+      title: string;
+      revealMode: TrailRevealMode;
+      stops: TrailStopDraft[];
+    }): Promise<CreateResult> => {
+      if (!myId) return { id: null, error: 'Not signed in.' };
+      const result = await repo.createTrail(args);
+      if (result.id) {
+        void loadMessages(args.conversationId);
+        void loadInbox();
+      }
+      return result;
+    },
+    [myId, loadMessages, loadInbox],
+  );
+
+  const checkInTrailStep = useCallback(
+    async (trailId: string, step: number, position: LatLng): Promise<CheckInOutcome> => {
+      if (!myId) return { result: null, error: 'Not signed in.' };
+      const outcome = await repo.checkInTrailStep(trailId, step, position);
+      if (outcome.result === 'unlocked') {
+        const conversationId = trails.find((t) => t.id === trailId)?.conversationId;
+        if (conversationId) void loadMessages(conversationId);
+        void loadInbox();
+      }
+      return outcome;
+    },
+    [myId, trails, loadMessages, loadInbox],
   );
 
   const reactToMessage = useCallback(
@@ -475,6 +566,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     () => ({
       conversations,
       pendingFenced,
+      trails,
       inbox,
       entryFor,
       refreshInbox,
@@ -483,11 +575,14 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       markRead,
       unlockMessage,
       reactToMessage,
+      createTrail,
+      checkInTrailStep,
       requestMessages,
     }),
     [
       conversations,
       pendingFenced,
+      trails,
       inbox,
       entryFor,
       refreshInbox,
@@ -496,6 +591,8 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       markRead,
       unlockMessage,
       reactToMessage,
+      createTrail,
+      checkInTrailStep,
       requestMessages,
     ],
   );
@@ -592,10 +689,50 @@ export function usePendingFencedMessages(): Message[] {
 }
 
 export function useMessageActions() {
-  const { sendMessage, createConversation, markRead, unlockMessage, reactToMessage } =
-    useMessagesApi();
+  const {
+    sendMessage,
+    createConversation,
+    markRead,
+    unlockMessage,
+    reactToMessage,
+    createTrail,
+    checkInTrailStep,
+  } = useMessagesApi();
   return useMemo(
-    () => ({ sendMessage, createConversation, markRead, unlockMessage, reactToMessage }),
-    [sendMessage, createConversation, markRead, unlockMessage, reactToMessage],
+    () => ({
+      sendMessage,
+      createConversation,
+      markRead,
+      unlockMessage,
+      reactToMessage,
+      createTrail,
+      checkInTrailStep,
+    }),
+    [
+      sendMessage,
+      createConversation,
+      markRead,
+      unlockMessage,
+      reactToMessage,
+      createTrail,
+      checkInTrailStep,
+    ],
+  );
+}
+
+/** Every trail in your threads, newest first. */
+export function useTrails(): Trail[] {
+  return useMessagesApi().trails;
+}
+
+/** The trails in one thread, oldest first, as they appear in it. */
+export function useConversationTrails(conversationId: string): Trail[] {
+  const { trails } = useMessagesApi();
+  return useMemo(
+    () =>
+      trails
+        .filter((t) => t.conversationId === conversationId)
+        .sort((a, b) => a.createdAt - b.createdAt),
+    [trails, conversationId],
   );
 }
