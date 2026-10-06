@@ -28,7 +28,15 @@ export {
 
 export { deletePushToken, savePushToken } from './push';
 
-export { checkInTrailStep, createTrail, fetchTrails, type CheckInResult } from './trails';
+export {
+  checkInTrailStep,
+  createTrail,
+  fetchTrailFinishers,
+  fetchTrails,
+  requestTrailHint,
+  type CheckInResult,
+  type HintResult,
+} from './trails';
 
 export { fetchProfile, searchProfiles } from './profiles';
 

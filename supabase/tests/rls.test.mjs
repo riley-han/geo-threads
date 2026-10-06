@@ -469,6 +469,144 @@ await asUser(alice, () => denied('a trail stop without a fence',
 await asUser(alice, () => denied('a second stop 1 on the same trail',
   () => db.query(`insert into public.messages (conversation_id,sender_id,body,fence_latitude,fence_longitude,fence_radius_meters,trail_id,trail_step) values ($1,$2,'x',37,-122,50,$3,1)`, [convo, alice, pinTrail])));
 
+console.log('\n\x1b[1m── trails: time windows ──\x1b[0m');
+const future = new Date(Date.now() + 86_400_000).toISOString();
+const past = new Date(Date.now() - 86_400_000).toISOString();
+let windowTrail;
+await asUser(alice, async () => {
+  const r = await allowed('alice creates a pin trail whose stop 2 opens tomorrow and stop 3 already closed',
+    () => db.query(`select public.create_trail($1,'Timed','pin',$2::jsonb) as id`, [convo, JSON.stringify([
+      stop(1, 37.60), stop(2, 37.61, { opens_at: future }), stop(3, 37.62, { closes_at: past }),
+    ])]));
+  windowTrail = r?.rows?.[0]?.id;
+});
+const win1 = await asUser(alice, () => stepId(windowTrail, 1));
+const win2 = await asUser(alice, () => stepId(windowTrail, 2));
+const win3 = await asUser(alice, () => stepId(windowTrail, 3));
+await asUser(bob, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [win1, bob]));
+await asUser(bob, async () => {
+  const v = await visibleSteps(windowTrail);
+  JSON.stringify(v) === '[1,2]' ? ok('a stop that has not opened is still visible once earned') : bad(`bob sees ${v}`);
+});
+await asUser(bob, () => denied('bob unlocking stop 2 before it opens',
+  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [win2, bob])));
+await db.query(`update public.messages set opens_at = now() - interval '1 minute' where id=$1`, [win2]);
+await asUser(bob, () => allowed('bob unlocks stop 2 once it has opened',
+  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2) returning message_id`, [win2, bob])));
+await asUser(bob, () => denied('bob unlocking stop 3 after it closed',
+  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [win3, bob])));
+await asUser(alice, () => denied('a time window on an ordinary message',
+  () => db.query(`insert into public.messages (conversation_id,sender_id,body,opens_at) values ($1,$2,'x',now())`, [convo, alice])));
+await asUser(alice, () => denied('a window that closes before it opens',
+  () => db.query(`select public.create_trail($1,'x','pin',$2::jsonb)`, [convo, JSON.stringify([
+    stop(1, 37.6, { opens_at: future, closes_at: past }), stop(2, 37.61),
+  ])])));
+let lateClue;
+await asUser(alice, async () => {
+  lateClue = (await db.query(`select public.create_trail($1,'Late','clue',$2::jsonb) as id`, [group, JSON.stringify([
+    stop(1, 37.50, { next_clue: 'go' }), stop(2, 37.51, { opens_at: future }),
+  ])])).rows[0].id;
+});
+const late1 = await asUser(alice, () => stepId(lateClue, 1));
+await asUser(bob, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2) on conflict do nothing`, [late1, bob]));
+await asUser(bob, async () => {
+  const far = (await db.query(`select public.check_in_trail_step($1,2,37.0,-122.4) as s`, [lateClue])).rows[0].s;
+  const here = (await db.query(`select public.check_in_trail_step($1,2,37.51,-122.4) as s`, [lateClue])).rows[0].s;
+  far === 'not_here' && here === 'not_open'
+    ? ok('clue check-in: wrong place says not_here, right place before opening says not_open')
+    : bad(`check-in far=${far} here=${here}`);
+  const v = await visibleSteps(lateClue);
+  JSON.stringify(v) === '[1]' ? ok('a not-yet-open check-in unlocks nothing') : bad(`bob sees ${v}`);
+});
+
+console.log('\n\x1b[1m── trails: hints ──\x1b[0m');
+let hintTrail;
+await asUser(alice, async () => {
+  const r = await allowed('alice creates a clue trail with hints after 60 minutes',
+    () => db.query(`select public.create_trail($1,'Hinted','clue',$2::jsonb,60) as id`, [group, JSON.stringify([
+      stop(1, 37.40, { next_clue: 'a' }), stop(2, 37.41, { next_clue: 'b' }), stop(3, 37.42),
+    ])]));
+  hintTrail = r?.rows?.[0]?.id;
+});
+const hint1 = await asUser(alice, () => stepId(hintTrail, 1));
+const hint2 = await asUser(alice, () => stepId(hintTrail, 2));
+await asUser(bob, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [hint1, bob]));
+await asUser(bob, async () => {
+  const r = (await db.query(`select public.use_trail_hint($1,2) as s`, [hintTrail])).rows[0].s;
+  r === 'too_soon' ? ok('a hint right after finding stop 1 is too_soon') : bad(`hint returned ${r}`);
+});
+await asUser(bob, () => denied('bob inserting a hint row directly',
+  () => db.query(`insert into public.trail_hints (trail_id,user_id,step) values ($1,$2,2)`, [hintTrail, bob])));
+await db.query(`update public.message_unlocks set unlocked_at = now() - interval '2 hours' where message_id=$1 and user_id=$2`, [hint1, bob]);
+await asUser(bob, async () => {
+  const r = (await db.query(`select public.use_trail_hint($1,2) as s`, [hintTrail])).rows[0].s;
+  r === 'revealed' ? ok('after the delay, the hint is revealed') : bad(`hint returned ${r}`);
+  const v = await visibleSteps(hintTrail);
+  JSON.stringify(v) === '[1,2]' ? ok("the hinted stop's row (and pin) is now visible to bob") : bad(`bob sees ${v}`);
+});
+await asUser(bob, () => allowed('bob unlocks the hinted stop like a pin-mode stop',
+  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2) returning message_id`, [hint2, bob])));
+await asUser(dave, async () => {
+  const v = await visibleSteps(hintTrail);
+  JSON.stringify(v) === '[1]' ? ok("bob's hint reveals nothing to dave") : bad(`dave sees ${v}`);
+  const rows = (await db.query(`select * from public.trail_hints`)).rows.length;
+  rows === 0 ? ok("dave cannot read bob's hint") : bad(`dave reads ${rows} hint rows`);
+});
+await asUser(dave, () => denied('dave asking for a hint before finding stop 1',
+  () => db.query(`select public.use_trail_hint($1,2) as s`, [hintTrail])));
+await asUser(alice, async () => {
+  const rows = (await db.query(`select user_id, step from public.trail_hints where trail_id=$1`, [hintTrail])).rows;
+  rows.length === 1 && rows[0].user_id === bob ? ok('the creator sees who used a hint') : bad(`alice sees ${rows.length} hints`);
+});
+await asUser(bob, async () => {
+  const pinHint = (await db.query(`select public.use_trail_hint($1,2) as s`, [pinTrail])).rows[0].s;
+  const noHint = (await db.query(`select public.use_trail_hint($1,2) as s`, [clueTrail])).rows[0].s;
+  pinHint === 'disabled' && noHint === 'disabled'
+    ? ok('hints are disabled in pin mode and on trails created without them')
+    : bad(`pin=${pinHint} clue=${noHint}`);
+});
+
+console.log('\n\x1b[1m── trails: finishing order ──\x1b[0m');
+let raceTrail;
+await asUser(alice, async () => {
+  raceTrail = (await db.query(`select public.create_trail($1,'Race','pin',$2::jsonb) as id`, [group, JSON.stringify([
+    stop(1, 37.30), stop(2, 37.31),
+  ])])).rows[0].id;
+});
+const race1 = await asUser(alice, () => stepId(raceTrail, 1));
+const race2 = await asUser(alice, () => stepId(raceTrail, 2));
+for (const who of [bob, dave]) {
+  await asUser(who, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [race1, who]));
+  await asUser(who, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [race2, who]));
+}
+// dave finished first.
+await db.query(`update public.message_unlocks set unlocked_at = now() - interval '10 minutes' where message_id=$1 and user_id=$2`, [race2, dave]);
+const order = async () => (await db.query(`select user_id, place::int as place from public.trail_finishers($1)`, [raceTrail])).rows;
+await asUser(bob, async () => {
+  const r = await order();
+  r.length === 2 && r[0].user_id === dave && r[0].place === 1 && r[1].user_id === bob && r[1].place === 2
+    ? ok('bob sees the finishing order: dave 1st, bob 2nd')
+    : bad(`bob sees ${JSON.stringify(r)}`);
+});
+await asUser(alice, async () => {
+  (await order()).length === 2 ? ok('the creator sees the finishing order') : bad('creator cannot see finishers');
+});
+await asUser(carol, async () => {
+  (await order()).length === 0 ? ok('carol (not in the thread) sees no finishers') : bad('carol sees finishers');
+});
+await db.query(`update public.profiles set share_unlock_receipts=false where id=$1`, [dave]);
+await asUser(bob, async () => {
+  const r = await order();
+  r.length === 1 && r[0].user_id === bob && r[0].place === 1
+    ? ok('dave opted out: bob sees only himself, ranked 1st, with no gap')
+    : bad(`bob sees ${JSON.stringify(r)}`);
+});
+await asUser(dave, async () => {
+  const r = await order();
+  r.some((x) => x.user_id === dave) ? ok('dave still sees his own finish') : bad('dave cannot see his own finish');
+});
+await db.query(`update public.profiles set share_unlock_receipts=true where id=$1`, [dave]);
+
 console.log('\n\x1b[1m── constraints ──\x1b[0m');
 await asUser(alice, async () => {
   await denied('half-populated geofence (lat, no radius)',
@@ -485,14 +623,14 @@ await asUser(alice, async () => {
 
 console.log('\n\x1b[1m── anon (signed-out) sees nothing ──\x1b[0m');
 await db.exec(`set role anon; select set_config('request.jwt.claim.sub','',false);`);
-for (const t of ['profiles','friendships','conversations','conversation_participants','messages','message_unlocks','push_tokens','message_reactions','push_log','trails','trail_check_ins']) {
+for (const t of ['profiles','friendships','conversations','conversation_participants','messages','message_unlocks','push_tokens','message_reactions','push_log','trails','trail_check_ins','trail_hints']) {
   await denied(`anon reading ${t}`, () => db.query(`select * from public.${t}`));
 }
 await db.exec(`reset role`);
 
 console.log('\n\x1b[1m── every policy-filtered column is indexed ──\x1b[0m');
 const idx = (await db.query(`select tablename, indexdef from pg_indexes where schemaname='public'`)).rows;
-for (const [t,c] of [['friendships','requester_id'],['friendships','addressee_id'],['conversations','created_by'],['conversation_participants','user_id'],['messages','conversation_id'],['messages','sender_id'],['message_unlocks','user_id'],['push_tokens','user_id'],['push_tokens','token'],['message_reactions','user_id'],['trails','conversation_id'],['trails','created_by']]) {
+for (const [t,c] of [['friendships','requester_id'],['friendships','addressee_id'],['conversations','created_by'],['conversation_participants','user_id'],['messages','conversation_id'],['messages','sender_id'],['message_unlocks','user_id'],['push_tokens','user_id'],['push_tokens','token'],['message_reactions','user_id'],['trails','conversation_id'],['trails','created_by'],['trail_hints','user_id']]) {
   idx.some(i => i.tablename===t && i.indexdef.includes(c)) ? ok(`${t}.${c}`) : bad(`${t}.${c} is NOT indexed — RLS will seq-scan`);
 }
 

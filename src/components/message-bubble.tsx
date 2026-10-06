@@ -11,6 +11,7 @@ import { Fonts, Spacing } from '@/constants/theme';
 import type { Reaction } from '@/data/reactions';
 import type { Message } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
+import { formatMoment } from '@/lib/format-moment';
 import { formatDistance, formatRadius } from '@/lib/geo';
 import { messageVisibility } from '@/lib/message-visibility';
 import { useAuth } from '@/store/auth-store';
@@ -124,6 +125,30 @@ export function MessageBubble({
               </ThemedText>
             </Pressable>
           ) : null}
+        </GlassPanel>
+      ) : visibility.kind === 'scheduled' || visibility.kind === 'closed' ? (
+        <GlassPanel variant="regular" style={[styles.bubble, styles.lockedBubble, bubbleRadius]}>
+          <View style={styles.lockHeader}>
+            <ThemedText style={styles.lockGlyph}>🔒</ThemedText>
+            <ThemedText type="smallBold">
+              {visibility.kind === 'scheduled' ? 'Not open yet' : 'This stop has closed'}
+            </ThemedText>
+          </View>
+          <ThemedText type="small" themeColor="textSecondary" style={styles.lockHint}>
+            At {visibility.fence.label}
+          </ThemedText>
+          <ThemedText
+            type="small"
+            style={[
+              styles.lockDistance,
+              visibility.kind === 'scheduled'
+                ? { color: theme.accentText }
+                : { color: theme.textSecondary },
+            ]}>
+            {visibility.kind === 'scheduled'
+              ? `Opens ${formatMoment(visibility.opensAt)}`
+              : `Closed ${formatMoment(visibility.closedAt)}`}
+          </ThemedText>
         </GlassPanel>
       ) : (
         <Pressable

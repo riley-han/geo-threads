@@ -21,12 +21,14 @@ import type {
   MessageReaction,
   Person,
   Trail,
+  TrailFinisher,
   TrailRevealMode,
   TrailStopDraft,
 } from '@/data/types';
 import { fenceKey } from '@/data/types';
 import { clearMirror, mirrorOwner, replaceMirror, type MirroredMessage } from '@/db/fence-mirror';
 import type { Geofence, LatLng } from '@/lib/geo';
+import { isWithinWindow } from '@/lib/message-visibility';
 import { useAuth } from '@/store/auth-store';
 
 export type LoadState = 'idle' | 'loading' | 'ready' | 'error';
@@ -37,6 +39,7 @@ export type CreateResult = { id: string | null; error: string | null };
 type Entry = { messages: Message[]; state: LoadState; error: string | null };
 
 export type CheckInOutcome = { result: repo.CheckInResult | null; error: string | null };
+export type HintOutcome = { result: repo.HintResult | null; error: string | null };
 
 type InboxFetch = {
   convos: Awaited<ReturnType<typeof repo.fetchConversations>>;
@@ -71,8 +74,11 @@ type MessagesApi = {
     conversationId: string;
     title: string;
     revealMode: TrailRevealMode;
+    hintAfterMinutes: number | null;
     stops: TrailStopDraft[];
   }) => Promise<CreateResult>;
+  /** Reveal a clue-mode stop's pin after the creator's hint delay. */
+  requestTrailHint: (trailId: string, step: number) => Promise<HintOutcome>;
   /** Unlock a trail stop by being there; the server compares the position. */
   checkInTrailStep: (trailId: string, step: number, position: LatLng) => Promise<CheckInOutcome>;
   requestMessages: (conversationId: string) => void;
@@ -121,7 +127,9 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       setPendingFenced(messages);
 
       const rows: MirroredMessage[] = messages
-        .filter((m) => m.fence != null)
+        // Same rule as the regions in geofence-sync: no alert for a stop that
+        // cannot be unlocked right now.
+        .filter((m) => m.fence != null && isWithinWindow(m))
         .map((m) => ({
           messageId: m.id,
           conversationId: m.conversationId,
@@ -400,6 +408,8 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         unlockedAt: null,
         foundBy: [],
         reactions: [],
+        opensAt: null,
+        closesAt: null,
         status: 'sending',
       });
 
@@ -504,6 +514,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       conversationId: string;
       title: string;
       revealMode: TrailRevealMode;
+      hintAfterMinutes: number | null;
       stops: TrailStopDraft[];
     }): Promise<CreateResult> => {
       if (!myId) return { id: null, error: 'Not signed in.' };
@@ -522,6 +533,21 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       if (!myId) return { result: null, error: 'Not signed in.' };
       const outcome = await repo.checkInTrailStep(trailId, step, position);
       if (outcome.result === 'unlocked') {
+        const conversationId = trails.find((t) => t.id === trailId)?.conversationId;
+        if (conversationId) void loadMessages(conversationId);
+        void loadInbox();
+      }
+      return outcome;
+    },
+    [myId, trails, loadMessages, loadInbox],
+  );
+
+  const requestTrailHint = useCallback(
+    async (trailId: string, step: number): Promise<HintOutcome> => {
+      if (!myId) return { result: null, error: 'Not signed in.' };
+      const outcome = await repo.requestTrailHint(trailId, step);
+      if (outcome.result === 'revealed') {
+        // The stop's row (and so its pin and geofence) is now visible.
         const conversationId = trails.find((t) => t.id === trailId)?.conversationId;
         if (conversationId) void loadMessages(conversationId);
         void loadInbox();
@@ -577,6 +603,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       reactToMessage,
       createTrail,
       checkInTrailStep,
+      requestTrailHint,
       requestMessages,
     }),
     [
@@ -593,6 +620,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       reactToMessage,
       createTrail,
       checkInTrailStep,
+      requestTrailHint,
       requestMessages,
     ],
   );
@@ -697,6 +725,7 @@ export function useMessageActions() {
     reactToMessage,
     createTrail,
     checkInTrailStep,
+    requestTrailHint,
   } = useMessagesApi();
   return useMemo(
     () => ({
@@ -707,6 +736,7 @@ export function useMessageActions() {
       reactToMessage,
       createTrail,
       checkInTrailStep,
+      requestTrailHint,
     }),
     [
       sendMessage,
@@ -716,8 +746,30 @@ export function useMessageActions() {
       reactToMessage,
       createTrail,
       checkInTrailStep,
+      requestTrailHint,
     ],
   );
+}
+
+/**
+ * The finishing order for a trail, refetched whenever `version` changes (pass
+ * something that moves when a stop is found, such as a finisher count).
+ */
+export function useTrailFinishers(trailId: string, version: number): TrailFinisher[] {
+  // The previous result stays on screen while a refetch is in flight.
+  const [finishers, setFinishers] = useState<TrailFinisher[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    void repo.fetchTrailFinishers(trailId).then(({ finishers: rows, error }) => {
+      if (active && !error) setFinishers(rows);
+    });
+    return () => {
+      active = false;
+    };
+  }, [trailId, version]);
+
+  return finishers;
 }
 
 /** Every trail in your threads, newest first. */

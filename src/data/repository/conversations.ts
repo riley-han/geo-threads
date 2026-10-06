@@ -22,7 +22,7 @@ const CONVERSATION_SELECT = `
     sender:profiles!messages_sender_id_fkey ( id, name, handle, avatar_url ),
     unlocks:message_unlocks ( user_id, unlocked_at ),
     reactions:message_reactions ( user_id, emoji ),
-    trail_id, trail_step, next_clue,
+    trail_id, trail_step, next_clue, opens_at, closes_at,
     trail:trails!messages_trail_id_fkey ( id, title, reveal_mode, step_count )
   )
 `;

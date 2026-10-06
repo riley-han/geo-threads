@@ -40,6 +40,8 @@ export type MessageRowWithRefs = {
   trail_id?: string | null;
   trail_step?: number | null;
   next_clue?: string | null;
+  opens_at?: string | null;
+  closes_at?: string | null;
   trail?: TrailRefRow | null;
 };
 
@@ -53,6 +55,8 @@ export type TrailRowWithStops = {
   reveal_mode: TrailRevealMode;
   step_count: number;
   created_at: string;
+  hint_after_minutes: number | null;
+  hints: { user_id: string; step: number }[] | null;
   stops: {
     id: string;
     trail_step: number | null;
@@ -146,6 +150,8 @@ export function toMessage(row: MessageRowWithRefs, myId: string): Message {
     foundBy: isMine ? toFoundBy(unlocks, myId) : [],
     reactions: toReactions(row.reactions ?? []),
     trail: toTrailInfo(row),
+    opensAt: toEpochMs(row.opens_at),
+    closesAt: toEpochMs(row.closes_at),
     status: 'sent',
   };
 }
@@ -171,6 +177,8 @@ export function toTrail(row: TrailRowWithStops): Trail {
     revealMode: row.reveal_mode,
     total: row.step_count,
     createdAt: toEpochMs(row.created_at) ?? 0,
+    hintAfterMinutes: row.hint_after_minutes,
+    hints: (row.hints ?? []).map((h) => ({ personId: h.user_id, step: h.step })),
     stops: row.stops
       .filter((s) => s.trail_step != null)
       .map((s) => ({
