@@ -247,7 +247,22 @@ const messages = [
   },
 ];
 
-die('creating messages', (await admin.from('messages').upsert(messages, { onConflict: 'id' })).error);
+// A fenced message's text lives in message_sealed, not on the shared row.
+const sealed = messages
+  .filter((m) => m.fence_latitude != null)
+  .map((m) => ({ message_id: m.id, body: m.body }));
+die(
+  'creating messages',
+  (
+    await admin
+      .from('messages')
+      .upsert(
+        messages.map((m) => (m.fence_latitude != null ? { ...m, body: null } : m)),
+        { onConflict: 'id' },
+      )
+  ).error,
+);
+die('sealing fenced text', (await admin.from('message_sealed').upsert(sealed, { onConflict: 'message_id' })).error);
 console.log(`  + ${messages.length} messages (1 fenced)\n`);
 
 console.log('Done. Sign in as any of:\n');

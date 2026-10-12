@@ -2,7 +2,7 @@ import * as Location from 'expo-location';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 
-import type { Geofence, LatLng } from '@/lib/geo';
+import type { Fix, Geofence, LatLng } from '@/lib/geo';
 import {
   getLocationAccess,
   requestBackgroundAccess,
@@ -15,7 +15,7 @@ const FAR_AWAY: LatLng = { latitude: 34.0522, longitude: -118.2437 };
 
 type LocationApi = {
   /** Null until a fix arrives, or while access is withheld. Callers must fail closed. */
-  position: LatLng | null;
+  position: Fix | null;
   access: LocationAccess;
   requestForeground: () => Promise<LocationAccess>;
   requestBackground: () => Promise<LocationAccess>;
@@ -33,7 +33,7 @@ const LocationContext = createContext<LocationApi | null>(null);
 
 export function LocationProvider({ children }: { children: ReactNode }) {
   const [access, setAccess] = useState<LocationAccess>('none');
-  const [gpsPosition, setGpsPosition] = useState<LatLng | null>(null);
+  const [gpsPosition, setGpsPosition] = useState<Fix | null>(null);
   const [simulated, setSimulated] = useState<LatLng | null>(null);
 
   useEffect(() => {
@@ -52,7 +52,13 @@ export function LocationProvider({ children }: { children: ReactNode }) {
       subscription = await Location.watchPositionAsync(
         { accuracy: Location.Accuracy.Balanced, distanceInterval: 25, timeInterval: 10_000 },
         ({ coords }) =>
-          setGpsPosition({ latitude: coords.latitude, longitude: coords.longitude }),
+          setGpsPosition({
+            latitude: coords.latitude,
+            longitude: coords.longitude,
+            // The server allows a little slack for an imprecise fix when it
+            // checks an unlock, so the accuracy travels with the position.
+            accuracy: coords.accuracy,
+          }),
       );
       if (cancelled) {
         subscription.remove();
@@ -123,6 +129,6 @@ export function useLocation(): LocationApi {
   return ctx;
 }
 
-export function useCurrentPosition(): LatLng | null {
+export function useCurrentPosition(): Fix | null {
   return useLocation().position;
 }

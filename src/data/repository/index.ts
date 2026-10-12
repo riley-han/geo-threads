@@ -24,6 +24,7 @@ export {
   setReaction,
   subscribeToMessageEvents,
   unlockMessage,
+  type UnlockResult,
 } from './messages';
 
 export { deletePushToken, savePushToken } from './push';

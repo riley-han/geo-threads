@@ -3,6 +3,9 @@ export type LatLng = {
   longitude: number;
 };
 
+/** A position from the device, with its reported accuracy in metres when known. */
+export type Fix = LatLng & { accuracy?: number | null };
+
 export type Geofence = LatLng & {
   radiusMeters: number;
   label: string;

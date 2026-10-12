@@ -1,4 +1,5 @@
 import Constants from 'expo-constants';
+import Storage from 'expo-sqlite/kv-store';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
@@ -14,8 +15,29 @@ import { hasNotificationAccess } from '@/lib/notifications';
  * never a crash or an error in front of the user.
  */
 
-/** The token this device last registered, so sign-out can remove exactly it. */
-let registeredToken: string | null = null;
+/**
+ * The token this device last registered, so sign-out can remove exactly it.
+ * Persisted, because an app relaunched since registering still has to remove
+ * it: a token left behind keeps delivering the old account's pushes.
+ */
+const TOKEN_KEY = 'push.registeredToken';
+
+function readRegisteredToken(): string | null {
+  try {
+    return Storage.getItemSync(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeRegisteredToken(token: string | null) {
+  try {
+    if (token) Storage.setItemSync(TOKEN_KEY, token);
+    else Storage.removeItemSync(TOKEN_KEY);
+  } catch {
+    // Without storage, sign-out falls back to asking Expo for the token again.
+  }
+}
 
 function easProjectId(): string | undefined {
   return Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
@@ -43,7 +65,7 @@ export async function registerPushToken(): Promise<void> {
       console.warn('[push] could not register token', error);
       return;
     }
-    registeredToken = token;
+    writeRegisteredToken(token);
   } catch (e) {
     console.warn('[push] registration skipped', e instanceof Error ? e.message : e);
   }
@@ -54,12 +76,29 @@ export async function registerPushToken(): Promise<void> {
  * only lets you delete your own rows, so after sign-out the delete is refused.
  */
 export async function unregisterPushToken(): Promise<void> {
-  const token = registeredToken;
-  registeredToken = null;
+  let token = readRegisteredToken();
+
+  // Registration may have finished without being recorded (or storage was
+  // cleared). The device token is stable, so ask for it again rather than
+  // leave it pointing at this account.
+  if (!token && (Platform.OS === 'ios' || Platform.OS === 'android')) {
+    const projectId = easProjectId();
+    try {
+      if (projectId && (await hasNotificationAccess())) {
+        token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
+      }
+    } catch {
+      // No token to find: nothing was registered from here.
+    }
+  }
   if (!token) return;
 
   const { error } = await deletePushToken(token);
-  if (error) console.warn('[push] could not remove token', error);
+  if (error) {
+    console.warn('[push] could not remove token', error);
+    return;
+  }
+  writeRegisteredToken(null);
 }
 
 /**

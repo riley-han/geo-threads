@@ -41,7 +41,8 @@ type MessageRecord = {
   id: string;
   conversation_id: string;
   sender_id: string;
-  body: string;
+  /** Null for a fenced message: its text is in message_sealed, which this never reads. */
+  body: string | null;
   fence_latitude: number | null;
   fence_label: string | null;
   trail_id?: string | null;
@@ -71,7 +72,7 @@ const supabase = createClient(
 
 Deno.serve(async (req) => {
   const secret = Deno.env.get('PUSH_WEBHOOK_SECRET');
-  if (!secret || req.headers.get('x-webhook-secret') !== secret) {
+  if (!secret || !secretsMatch(req.headers.get('x-webhook-secret'), secret)) {
     return new Response('unauthorized', { status: 401 });
   }
 
@@ -137,12 +138,17 @@ async function forNewMessage(message: MessageRecord): Promise<ExpoMessage[]> {
     ? `Left you a trail: ${trail.title}. Start at ${message.fence_label || 'the first stop'}`
     : isFenced
       ? `Left you a message at ${message.fence_label || 'a place'}`
-      : truncate(message.body, PREVIEW_LENGTH);
+      : truncate(message.body ?? '', PREVIEW_LENGTH);
 
   return toExpoMessages(recipientIds, {
     title,
     body,
-    data: { conversationId: message.conversation_id, kind: 'message' },
+    data: {
+      conversationId: message.conversation_id,
+      messageId: message.id,
+      ...(message.trail_id ? { trailId: message.trail_id } : {}),
+      kind: message.trail_id ? 'trail' : 'message',
+    },
   });
 }
 
@@ -176,7 +182,12 @@ async function forUnlock(unlock: UnlockRecord): Promise<ExpoMessage[]> {
       body: finished
         ? `${finder.name} finished your trail ${trail.title}`
         : `${finder.name} found stop ${step} of ${trail.step_count} on ${trail.title}`,
-      data: { conversationId: message.conversation_id, kind: finished ? 'trail_finished' : 'receipt' },
+      data: {
+        conversationId: message.conversation_id,
+        messageId: message.id,
+        trailId: message.trail_id,
+        kind: finished ? 'trail_finished' : 'receipt',
+      },
     });
   }
 
@@ -184,7 +195,7 @@ async function forUnlock(unlock: UnlockRecord): Promise<ExpoMessage[]> {
   return toExpoMessages([message.sender_id as string], {
     title: 'Found it',
     body: `${finder.name} found your message at ${place}`,
-    data: { conversationId: message.conversation_id, kind: 'receipt' },
+    data: { conversationId: message.conversation_id, messageId: message.id, kind: 'receipt' },
   });
 }
 
@@ -219,12 +230,12 @@ async function forReaction(reaction: ReactionRecord): Promise<ExpoMessage[]> {
   const body =
     message.fence_latitude != null
       ? `Reacted ${reaction.emoji} to your message at ${message.fence_label || 'a place'}`
-      : `Reacted ${reaction.emoji} to “${truncate(message.body as string, REACTION_PREVIEW_LENGTH)}”`;
+      : `Reacted ${reaction.emoji} to “${truncate((message.body as string | null) ?? '', REACTION_PREVIEW_LENGTH)}”`;
 
   return toExpoMessages([message.sender_id as string], {
     title: reactor,
     body,
-    data: { conversationId: message.conversation_id, kind: 'reaction' },
+    data: { conversationId: message.conversation_id, messageId: message.id, kind: 'reaction' },
   });
 }
 
@@ -295,6 +306,19 @@ async function send(messages: ExpoMessage[]): Promise<number> {
     await supabase.from('push_tokens').delete().in('token', dead);
   }
   return messages.length - dead.length;
+}
+
+/**
+ * Compares the webhook secret without returning early on the first differing
+ * byte, so response timing does not reveal how much of a guess was right.
+ */
+function secretsMatch(given: string | null, expected: string): boolean {
+  if (given == null) return false;
+  const a = new TextEncoder().encode(given);
+  const b = new TextEncoder().encode(expected);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < b.length; i++) diff |= (a[i] ?? 0) ^ b[i];
+  return diff === 0;
 }
 
 function truncate(text: string, max: number): string {

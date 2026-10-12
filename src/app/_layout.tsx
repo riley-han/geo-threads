@@ -111,7 +111,12 @@ function AuthGate({ children }: { children: ReactNode }) {
     await Promise.all([clearMirror(db).catch(() => {}), unregisterPushToken()]);
   }, [db]);
 
-  return <AuthProvider onSignOut={clear}>{children}</AuthProvider>;
+  // The mirror rebuilds itself on the next inbox load; the push token does not.
+  return (
+    <AuthProvider onSignOut={clear} onSignOutFailed={registerPushToken}>
+      {children}
+    </AuthProvider>
+  );
 }
 
 /**

@@ -79,9 +79,20 @@ if (!convo) throw new Error('no thread between @ada and @miguel: run npm run db:
 const created = { messages: [], trails: [] };
 const fence = { fence_latitude: 37.7955, fence_longitude: -122.3937, fence_radius_meters: 150, fence_label: 'Ferry Building' };
 
+// Service role writes the shared row and, for a fenced message, its sealed
+// text: the same two rows send_message writes for a signed-in sender.
 async function message(row) {
-  const m = must(await s.from('messages').insert({ conversation_id: convo, ...row }).select('id').single(), 'message');
+  const fenced = row.fence_latitude != null;
+  const m = must(
+    await s
+      .from('messages')
+      .insert({ conversation_id: convo, ...row, body: fenced ? null : row.body })
+      .select('id')
+      .single(),
+    'message',
+  );
   created.messages.push(m.id);
+  if (fenced) must(await s.from('message_sealed').insert({ message_id: m.id, body: row.body }), 'sealed');
   return m.id;
 }
 const unlock = async (messageId, userId) =>

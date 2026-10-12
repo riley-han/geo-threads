@@ -13,7 +13,7 @@ import type { Message } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { formatMoment } from '@/lib/format-moment';
 import { formatDistance, formatRadius } from '@/lib/geo';
-import { messageVisibility } from '@/lib/message-visibility';
+import { messageVisibility, UNLOCK_REFUSED_COPY } from '@/lib/message-visibility';
 import { useAuth } from '@/store/auth-store';
 import { useCurrentPosition } from '@/store/location-store';
 import { useMessageActions } from '@/store/messages-store';
@@ -45,6 +45,9 @@ export function MessageBubble({
   // Set when this viewer unlocks the message here, so the "tell them you found
   // it" prompt appears once, in the moment, and not on every later visit.
   const [justUnlocked, setJustUnlocked] = useState(false);
+  const [unlocking, setUnlocking] = useState(false);
+  // Why the server said no, shown in the bubble. Cleared on the next try.
+  const [unlockStatus, setUnlockStatus] = useState<string | null>(null);
 
   const fence = message.fence;
   const visibility = messageVisibility(message, position);
@@ -55,6 +58,16 @@ export function MessageBubble({
     message.reactions.find((r) => r.personId === myId)?.emoji ?? null;
   const align = isMine ? 'end' : 'start';
   const showNudge = canReact && justUnlocked && !isMine && mine == null;
+
+  const unlock = async () => {
+    if (!position || unlocking) return;
+    setUnlocking(true);
+    setUnlockStatus(null);
+    const { result, error } = await unlockMessage(message.id, position);
+    setUnlocking(false);
+    if (result === 'unlocked') setJustUnlocked(true);
+    else setUnlockStatus(error ?? (result ? UNLOCK_REFUSED_COPY[result] : 'Could not unlock.'));
+  };
 
   const pick = (emoji: Reaction) => {
     setPickerOpen(false);
@@ -78,10 +91,10 @@ export function MessageBubble({
 
       {visibility.kind === 'unlockable' ? (
         <Pressable
-          onPress={() => {
-            setJustUnlocked(true);
-            void unlockMessage(message.id);
-          }}>
+          onPress={() => void unlock()}
+          disabled={unlocking}
+          accessibilityRole="button"
+          accessibilityLabel={`Unlock the message at ${visibility.fence.label}`}>
           <GlassPanel
             variant="regular"
             interactive
@@ -94,8 +107,13 @@ export function MessageBubble({
               At {visibility.fence.label}
             </ThemedText>
             <ThemedText type="small" style={[styles.lockDistance, { color: theme.accentText }]}>
-              Tap to unlock
+              {unlocking ? 'Unlocking…' : 'Tap to unlock'}
             </ThemedText>
+            {unlockStatus ? (
+              <ThemedText type="small" themeColor="textSecondary" style={styles.lockHint}>
+                {unlockStatus}
+              </ThemedText>
+            ) : null}
           </GlassPanel>
         </Pressable>
       ) : visibility.kind === 'locked' ? (
