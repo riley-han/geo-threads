@@ -19,7 +19,10 @@ type LocationApi = {
   access: LocationAccess;
   requestForeground: () => Promise<LocationAccess>;
   requestBackground: () => Promise<LocationAccess>;
-  /** Dev override — shadows GPS so unlock states are testable without moving. */
+  /**
+   * Dev override — shadows GPS so unlock states are testable without moving.
+   * Inert outside __DEV__: a release build must only ever report the real fix.
+   */
   simulated: LatLng | null;
   jumpInside: (fence: Geofence) => void;
   jumpFarAway: () => void;
@@ -96,14 +99,17 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   return (
     <LocationContext.Provider
       value={{
-        position: simulated ?? gpsPosition,
+        position: (__DEV__ ? simulated : null) ?? gpsPosition,
         access,
         requestForeground,
         requestBackground,
-        simulated,
-        jumpInside: (fence) =>
-          setSimulated({ latitude: fence.latitude, longitude: fence.longitude }),
-        jumpFarAway: () => setSimulated(FAR_AWAY),
+        simulated: __DEV__ ? simulated : null,
+        jumpInside: (fence) => {
+          if (__DEV__) setSimulated({ latitude: fence.latitude, longitude: fence.longitude });
+        },
+        jumpFarAway: () => {
+          if (__DEV__) setSimulated(FAR_AWAY);
+        },
         stopSimulating: () => setSimulated(null),
       }}>
       {children}
