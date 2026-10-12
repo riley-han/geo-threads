@@ -9,7 +9,9 @@ import { ThemedView } from '@/components/themed-view';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
 import { DEFAULT_POSITION } from '@/data/places';
 import { useTheme } from '@/hooks/use-theme';
+import type { Message } from '@/data/types';
 import { distanceMeters, formatDistance } from '@/lib/geo';
+import { messageRoute } from '@/lib/message-route';
 import { useCurrentPosition } from '@/store/location-store';
 import { useInboxState, usePendingFencedMessages } from '@/store/messages-store';
 
@@ -31,15 +33,14 @@ export default function MapScreen() {
     }))
     .sort((a, b) => a.distance - b.distance);
 
-  const open = (conversationId: string) =>
-    router.push({ pathname: '/conversation/[id]', params: { id: conversationId } });
+  const open = (message: Message) => router.push(messageRoute(message));
 
   return (
     <ThemedView style={styles.root}>
       <MapCanvas
         position={origin}
         fences={pins.map((p) => p.fence)}
-        onSelectFence={(index) => open(pins[index].message.conversationId)}
+        onSelectFence={(index) => open(pins[index].message)}
       />
 
       <GlassPanel variant="regular" style={styles.header}>
@@ -72,7 +73,7 @@ export default function MapScreen() {
               pins.map(({ message, fence, distance }) => (
                 <Pressable
                   key={message.id}
-                  onPress={() => open(message.conversationId)}
+                  onPress={() => open(message)}
                   style={({ pressed }) => [
                     styles.row,
                     { backgroundColor: theme.backgroundElement },

@@ -13,7 +13,7 @@ import type { FencePickerMapHandle, FencePickerMapProps } from './fence-picker-m
  * and leaves center selection to search and the place chips below it.
  */
 export const FencePickerMap = forwardRef<FencePickerMapHandle, FencePickerMapProps>(
-  function FencePickerMap({ center, radiusMeters }, ref) {
+  function FencePickerMap({ radiusMeters }, ref) {
     const theme = useTheme();
 
     useImperativeHandle(ref, () => ({ focusOn: () => {} }));
@@ -25,9 +25,6 @@ export const FencePickerMap = forwardRef<FencePickerMapHandle, FencePickerMapPro
           <View style={[styles.pin, { backgroundColor: theme.accent }]} />
         </View>
         <ThemedText type="smallBold">{formatRadius(radiusMeters)} radius</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary" style={styles.coords}>
-          {center.latitude.toFixed(4)}, {center.longitude.toFixed(4)}
-        </ThemedText>
       </View>
     );
   },
@@ -61,8 +58,5 @@ const styles = StyleSheet.create({
     width: 14,
     height: 14,
     borderRadius: 7,
-  },
-  coords: {
-    fontVariant: ['tabular-nums'],
   },
 });
