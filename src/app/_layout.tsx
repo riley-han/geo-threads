@@ -9,7 +9,7 @@ import * as Notifications from 'expo-notifications';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider, useRouter } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { SQLiteProvider, useSQLiteContext } from 'expo-sqlite';
-import { Suspense, useCallback, useEffect, type ReactNode } from 'react';
+import { Suspense, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { ActivityIndicator, View } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
@@ -31,25 +31,40 @@ import '@/lib/geofence-task';
 
 SplashScreen.preventAutoHideAsync();
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Routes a tapped arrival notification to the thread it refers to. */
 function useNotificationRouting() {
   const router = useRouter();
   const { session } = useAuth();
+  const isSignedIn = session != null;
   const lastResponse = Notifications.useLastNotificationResponse();
+  // The last response stays put after it is handled, so without this every
+  // re-run (a sign-in, a remount) would open the same thread again.
+  const handled = useRef<string | null>(null);
 
   useEffect(() => {
     // Routing into a thread while signed out would be bounced by the guard
     // below and lose the notification, so wait for the session to land.
-    if (!session) return;
+    if (!isSignedIn || !lastResponse) return;
 
-    const data = lastResponse?.notification.request.content.data as
-      { conversationId?: string } | undefined;
-    if (data?.conversationId) {
-      router.push({ pathname: '/conversation/[id]', params: { id: data.conversationId } });
-    } else if (lastResponse) {
+    const id = lastResponse.notification.request.identifier;
+    if (handled.current === id) return;
+    handled.current = id;
+
+    const data = lastResponse.notification.request.content.data as
+      { conversationId?: unknown } | undefined;
+    // Payload data is not trusted to be well-formed: only a real id is routed.
+    const conversationId =
+      typeof data?.conversationId === 'string' && UUID.test(data.conversationId)
+        ? data.conversationId
+        : null;
+    if (conversationId) {
+      router.push({ pathname: '/conversation/[id]', params: { id: conversationId } });
+    } else {
       router.push('/messages');
     }
-  }, [lastResponse, router, session]);
+  }, [lastResponse, router, isSignedIn]);
 }
 
 function RootNavigator() {

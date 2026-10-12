@@ -273,7 +273,8 @@ export default function ConversationScreen() {
                 </ThemedText>
               </View>
 
-              {latestFence ? (
+              {/* Dev-only: teleports the position to test unlock states. */}
+              {__DEV__ && latestFence ? (
                 <Pressable
                   onPress={() => cycleSimulation()}
                   hitSlop={8}
