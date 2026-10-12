@@ -1,3 +1,4 @@
+import { displayPlaceName } from '@/data/places';
 import { isReaction } from '@/data/reactions';
 import type {
   Conversation,
@@ -128,7 +129,7 @@ function toFence(row: MessageRowWithRefs): Geofence | undefined {
     latitude: row.fence_latitude,
     longitude: row.fence_longitude,
     radiusMeters: row.fence_radius_meters,
-    label: row.fence_label ?? '',
+    label: displayPlaceName(row.fence_label),
   };
 }
 

@@ -21,7 +21,10 @@ export const RADIUS_STEPS = [50, 100, 200, 350, 500, 1000, 2000, 5000] as const;
 
 export const DEFAULT_RADIUS_M = 200;
 
-/** Beyond this, a preset's name is misleading — fall back to coordinates. */
+/** Shown for a spot with no better name. Never coordinates: people see this name. */
+export const UNNAMED_PLACE = 'Dropped pin';
+
+/** Beyond this, a preset's name is misleading; fall back to UNNAMED_PLACE. */
 const NAME_MATCH_RADIUS_M = 2000;
 
 export function nearestPlaceName(point: LatLng): string {
@@ -35,7 +38,15 @@ export function nearestPlaceName(point: LatLng): string {
     }
   }
   if (bestDistance > NAME_MATCH_RADIUS_M) {
-    return `${point.latitude.toFixed(3)}, ${point.longitude.toFixed(3)}`;
+    return UNNAMED_PLACE;
   }
   return best.name;
+}
+
+/** Labels saved before places were named: "40.373, -111.829". */
+const COORDINATE_LABEL = /^\s*-?\d{1,3}\.\d+\s*,\s*-?\d{1,3}\.\d+\s*$/;
+
+/** A fence label fit to show: empty or coordinate labels become UNNAMED_PLACE. */
+export function displayPlaceName(label: string | null | undefined): string {
+  return !label || COORDINATE_LABEL.test(label) ? UNNAMED_PLACE : label;
 }

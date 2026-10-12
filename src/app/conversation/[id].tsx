@@ -19,7 +19,7 @@ import { TrailCard } from '@/components/trail-card';
 import { ThemedText } from '@/components/themed-text';
 import { ThemedView } from '@/components/themed-view';
 import { Spacing } from '@/constants/theme';
-import type { Message, Trail } from '@/data/types';
+import type { Message, Trail, TrailInfo } from '@/data/types';
 import { LocationPrimingSheet, type PrimingVariant } from '@/components/location-priming-sheet';
 import { useTheme } from '@/hooks/use-theme';
 import { isInsideFence, type Geofence } from '@/lib/geo';
@@ -27,7 +27,6 @@ import { openSystemSettings } from '@/lib/location-permissions';
 import { messageVisibility } from '@/lib/message-visibility';
 import { requestNotificationAccess } from '@/lib/notifications';
 import { registerPushToken } from '@/lib/push';
-import { trailProgress, type TrailProgress } from '@/lib/trail-progress';
 import { useAuth } from '@/store/auth-store';
 import { useLocation } from '@/store/location-store';
 import {
@@ -43,30 +42,31 @@ const HEADER_HEIGHT = 52;
 
 type Row =
   | { kind: 'message'; message: Message; index: number }
-  | { kind: 'trail'; trail: Trail; progress: TrailProgress };
+  | { kind: 'trail'; message: Message; info: TrailInfo; trail: Trail | undefined };
 
 /**
- * Messages, with each trail's card placed after its latest visible stop. That
- * is where the trail "is" for this viewer: the next clue, the finish, or (for
- * the creator) everyone's progress.
+ * The thread as rows. A trail's stops never appear here one by one: the trail
+ * shows as a single card where its first stop was sent, and everything else
+ * happens on the trail's own screen. `index` points into `plain`, the
+ * messages that are not trail stops, so runs group as if the stops were absent.
  */
-function buildRows(messages: Message[], trails: Trail[], myId: string | null): Row[] {
-  const lastStop = new Map<string, number>();
-  messages.forEach((m, i) => {
-    if (m.trail) lastStop.set(m.trail.id, i);
-  });
-
+function buildRows(messages: Message[], trails: Trail[]): { rows: Row[]; plain: Message[] } {
   const rows: Row[] = [];
-  messages.forEach((message, index) => {
-    rows.push({ kind: 'message', message, index });
-    if (!myId) return;
-    for (const trail of trails) {
-      if (lastStop.get(trail.id) === index) {
-        rows.push({ kind: 'trail', trail, progress: trailProgress(trail, myId) });
-      }
+  const plain: Message[] = [];
+  const shown = new Set<string>();
+
+  for (const message of messages) {
+    if (message.trail) {
+      if (shown.has(message.trail.id)) continue;
+      shown.add(message.trail.id);
+      const trail = trails.find((t) => t.id === message.trail!.id);
+      rows.push({ kind: 'trail', message, info: message.trail, trail });
+    } else {
+      rows.push({ kind: 'message', message, index: plain.length });
+      plain.push(message);
     }
-  });
-  return rows;
+  }
+  return { rows, plain };
 }
 
 function latestFenceIn(messages: Message[]): Geofence | undefined {
@@ -178,20 +178,22 @@ export default function ConversationScreen() {
     );
   }
 
-  const rows = buildRows(messages, trails, myId);
-  const nameOf = (personId: string) =>
-    participants.find((p) => p.id === personId)?.name ?? 'them';
+  const { rows, plain } = buildRows(messages, trails);
 
   const renderRow = ({ item: row }: { item: Row }) => {
     if (row.kind === 'trail') {
       return (
         <TrailCard
           trail={row.trail}
-          progress={row.progress}
-          participants={participants}
-          creatorName={nameOf(row.trail.creatorId)}
-          onMakeTrail={() =>
-            router.push({ pathname: '/trail-builder', params: { conversationId: id } })
+          info={row.info}
+          myId={myId}
+          isMine={row.message.isMine}
+          creatorName={row.message.sender.name}
+          onOpen={() =>
+            router.push({
+              pathname: '/trail/[id]',
+              params: { id: row.info.id, conversationId: id },
+            })
           }
         />
       );
@@ -201,8 +203,8 @@ export default function ConversationScreen() {
 
   const renderItem = ({ item, index }: { item: Message; index: number }) => {
     const isMine = item.isMine;
-    const next = messages[index + 1];
-    const prev = messages[index - 1];
+    const next = plain[index + 1];
+    const prev = plain[index - 1];
 
     const isLastInRun =
       !next || next.sender.id !== item.sender.id || next.sentAt - item.sentAt > RUN_GAP_MS;
@@ -231,7 +233,7 @@ export default function ConversationScreen() {
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <FlatList
           data={rows}
-          keyExtractor={(row) => (row.kind === 'message' ? row.message.id : `trail-${row.trail.id}`)}
+          keyExtractor={(row) => (row.kind === 'message' ? row.message.id : `trail-${row.info.id}`)}
           renderItem={renderRow}
           contentContainerStyle={{
             paddingTop: HEADER_HEIGHT + insets.top,

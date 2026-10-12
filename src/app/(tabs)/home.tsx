@@ -14,6 +14,7 @@ import { useTheme } from '@/hooks/use-theme';
 import { formatDistance, type Geofence } from '@/lib/geo';
 import { formatMoment } from '@/lib/format-moment';
 import { messageVisibility } from '@/lib/message-visibility';
+import { messageRoute } from '@/lib/message-route';
 import { trailProgress } from '@/lib/trail-progress';
 import { useAuth } from '@/store/auth-store';
 import { useCurrentPosition } from '@/store/location-store';
@@ -159,10 +160,7 @@ export default function HomeScreen() {
               <Pressable
                 key={message.id}
                 onPress={() =>
-                  router.push({
-                    pathname: '/conversation/[id]',
-                    params: { id: message.conversationId },
-                  })
+                  router.push(messageRoute(message))
                 }
                 style={({ pressed }) => [
                   styles.row,
@@ -189,10 +187,7 @@ export default function HomeScreen() {
               <Pressable
                 key={message.id}
                 onPress={() =>
-                  router.push({
-                    pathname: '/conversation/[id]',
-                    params: { id: message.conversationId },
-                  })
+                  router.push(messageRoute(message))
                 }
                 style={({ pressed }) => [
                   styles.row,
@@ -221,8 +216,8 @@ export default function HomeScreen() {
                 key={`${trail.id}-${step}`}
                 onPress={() =>
                   router.push({
-                    pathname: '/conversation/[id]',
-                    params: { id: trail.conversationId },
+                    pathname: '/trail/[id]',
+                    params: { id: trail.id, conversationId: trail.conversationId },
                   })
                 }
                 style={({ pressed }) => [

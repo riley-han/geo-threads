@@ -77,6 +77,7 @@ function RootNavigator() {
         <Stack.Screen name="trail-builder" options={{ presentation: 'modal' }} />
         <Stack.Screen name="map" />
         <Stack.Screen name="conversation/[id]" />
+        <Stack.Screen name="trail/[id]" />
       </Stack.Protected>
     </Stack>
   );

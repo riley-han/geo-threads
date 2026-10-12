@@ -9,7 +9,7 @@ import { zoomForRadius, type LatLng } from '@/lib/geo';
 import type { FencePickerMapHandle, FencePickerMapProps } from './fence-picker-map.types';
 
 export const FencePickerMap = forwardRef<FencePickerMapHandle, FencePickerMapProps>(
-  function FencePickerMap({ center, radiusMeters, onMove }, ref) {
+  function FencePickerMap({ center, radiusMeters, onMove, route }, ref) {
     const theme = useTheme();
     const mapRef = useRef<AppleMaps.MapView>(null);
 
@@ -32,6 +32,13 @@ export const FencePickerMap = forwardRef<FencePickerMapHandle, FencePickerMapPro
 
     useImperativeHandle(ref, () => ({ focusOn }));
 
+    // The route with this stop at its new spot; stops without a place are skipped.
+    const path = route
+      ? route.stops
+          .map((p, i) => (i === route.index ? center : p))
+          .flatMap((p, i) => (p ? [{ step: i + 1, point: p }] : []))
+      : [];
+
     return (
       <View style={styles.wrap}>
         <AppleMaps.View
@@ -39,14 +46,38 @@ export const FencePickerMap = forwardRef<FencePickerMapHandle, FencePickerMapPro
           style={styles.map}
           cameraPosition={initialCamera}
           markers={[
+            ...path
+              .filter((p) => p.step !== route!.index + 1)
+              .map((p) => ({
+                id: `stop-${p.step}`,
+                coordinates: { latitude: p.point.latitude, longitude: p.point.longitude },
+                systemImage: `${p.step}.circle.fill`,
+                tintColor: theme.primary,
+                title: `Stop ${p.step}`,
+              })),
             {
               id: 'fence-center',
               coordinates: { latitude: center.latitude, longitude: center.longitude },
-              systemImage: 'mappin.circle.fill',
+              systemImage: route ? `${route.index + 1}.circle.fill` : 'mappin.circle.fill',
               tintColor: theme.accent,
-              title: 'Fence center',
+              title: route ? `Stop ${route.index + 1}` : 'This place',
             },
           ]}
+          polylines={
+            path.length > 1
+              ? [
+                  {
+                    id: 'route',
+                    coordinates: path.map((p) => ({
+                      latitude: p.point.latitude,
+                      longitude: p.point.longitude,
+                    })),
+                    color: theme.tint,
+                    width: 3,
+                  },
+                ]
+              : []
+          }
           circles={[
             {
               id: 'fence-circle',
@@ -72,13 +103,13 @@ export const FencePickerMap = forwardRef<FencePickerMapHandle, FencePickerMapPro
           style={styles.fitButton}
           hitSlop={8}>
           <ThemedText type="small" style={styles.fitText}>
-            Fit fence
+            Recenter
           </ThemedText>
         </Pressable>
 
         <View style={styles.hint} pointerEvents="none">
           <ThemedText type="small" style={styles.hintText}>
-            Tap the map to move the fence · pinch to zoom
+            Tap the map to move the place · pinch to zoom
           </ThemedText>
         </View>
       </View>
@@ -96,7 +127,7 @@ const styles = StyleSheet.create({
   fitButton: {
     position: 'absolute',
     top: Spacing.two,
-    right: Spacing.two,
+    left: Spacing.two,
     backgroundColor: Brand.mapLabel,
     paddingHorizontal: Spacing.three,
     paddingVertical: Spacing.one,

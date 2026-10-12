@@ -67,3 +67,21 @@ export async function searchAddress(query: string): Promise<GeocodeResult[]> {
 
   return labelled;
 }
+
+/**
+ * A human name for a spot (a business, a street address or a neighbourhood),
+ * or null when the geocoder has nothing or is unavailable. Never coordinates:
+ * the name is what everyone in the thread sees.
+ */
+export async function nameForPoint(point: LatLng): Promise<string | null> {
+  if (!isGeocodingSupported || Platform.OS === 'android') return null;
+  try {
+    const [address] = await Location.reverseGeocodeAsync(point);
+    if (!address) return null;
+    const street =
+      address.streetNumber && address.street ? `${address.streetNumber} ${address.street}` : address.street;
+    return address.name ?? street ?? address.district ?? address.city ?? null;
+  } catch {
+    return null;
+  }
+}
