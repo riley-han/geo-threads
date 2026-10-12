@@ -9,6 +9,7 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
+  Switch,
   TextInput,
   View,
 } from 'react-native';
@@ -31,6 +32,8 @@ import { useConversation, useMessageActions } from '@/store/messages-store';
 
 /** Must match trails.step_count's check in the trails migration. */
 const MIN_STOPS = 2;
+/** A loop needs somewhere to go before coming back: start, at least one stop, start again. */
+const MIN_LOOP_STOPS = 3;
 const MAX_STOPS = 10;
 
 type StopDraft = {
@@ -111,7 +114,24 @@ export default function TrailBuilderScreen() {
   const [openKey, setOpenKey] = useState<string | null>(() => stops[0].key);
   const [pickingFor, setPickingFor] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  /** Finish where you started: the last stop takes stop 1's place. */
+  const [loop, setLoop] = useState(false);
   const now = useNow();
+
+  // The stops as they will be sent. In a loop the last stop's place is always
+  // stop 1's, recomputed here so moving or re-placing stop 1 carries it along.
+  const placedStops: StopDraft[] = loop
+    ? stops.map((s, i) => (i === stops.length - 1 ? { ...s, fence: stops[0].fence } : s))
+    : stops;
+  const minStops = loop ? MIN_LOOP_STOPS : MIN_STOPS;
+
+  const toggleLoop = (on: boolean) => {
+    setLoop(on);
+    if (on && stops.length < MIN_LOOP_STOPS) {
+      const stop = blankStop();
+      setStops((prev) => [...prev, stop]);
+    }
+  };
 
   const update = (key: string, patch: Partial<StopDraft>) =>
     setStops((prev) => prev.map((s) => (s.key === key ? { ...s, ...patch } : s)));
@@ -153,7 +173,7 @@ export default function TrailBuilderScreen() {
   /** The first thing stopping a send, in the order a person would fix it. */
   const problem = (): { text: string; key?: string } | null => {
     if (!title.trim()) return { text: 'Give the trail a name.' };
-    for (const [i, s] of stops.entries()) {
+    for (const [i, s] of placedStops.entries()) {
       if (!s.fence) return { text: `Choose a place for stop ${i + 1}.`, key: s.key };
       if (!s.body.trim()) return { text: `Write what they find at stop ${i + 1}.`, key: s.key };
       if (mode === 'clue' && i < stops.length - 1 && !s.nextClue.trim()) {
@@ -184,7 +204,7 @@ export default function TrailBuilderScreen() {
       title: title.trim(),
       revealMode: mode,
       hintAfterMinutes: mode === 'clue' ? hintAfter : null,
-      stops: stops.map((s, i) => ({
+      stops: placedStops.map((s, i) => ({
         fence: s.fence!,
         body: s.body.trim(),
         // The last stop has nowhere to point; the server ignores it anyway.
@@ -209,7 +229,7 @@ export default function TrailBuilderScreen() {
   const pickingIndex = stops.findIndex((s) => s.key === pickingFor);
   const picking = pickingIndex >= 0 ? stops[pickingIndex] : undefined;
 
-  const mapStops: TrailMapStop[] = stops.flatMap((s, i) =>
+  const mapStops: TrailMapStop[] = placedStops.flatMap((s, i) =>
     s.fence ? [{ step: i + 1, fence: s.fence, state: s.key === openKey ? 'next' : 'ahead' }] : [],
   );
   const placed = mapStops.length;
@@ -272,7 +292,7 @@ export default function TrailBuilderScreen() {
                   ? `${stops.length} stops, none placed yet`
                   : `${placed} of ${stops.length} placed${
                       placed > 1 ? ` · about ${formatDistance(length)} as the crow flies` : ''
-                    }`}
+                    }${loop ? ' · ends where it starts' : ''}`}
               </ThemedText>
             </View>
 
@@ -306,10 +326,11 @@ export default function TrailBuilderScreen() {
 
             <View style={styles.section}>
               <ThemedText type="heading">Stops</ThemedText>
-              {stops.map((s, i) => (
+              {placedStops.map((s, i) => (
                 <StopEditor
                   key={s.key}
                   stop={s}
+                  loopEnd={loop && i === stops.length - 1}
                   index={i}
                   count={stops.length}
                   mode={mode}
@@ -318,7 +339,7 @@ export default function TrailBuilderScreen() {
                   onChange={(patch) => update(s.key, patch)}
                   onPickPlace={() => setPickingFor(s.key)}
                   onMove={(by) => move(s.key, by)}
-                  onRemove={stops.length > MIN_STOPS ? () => remove(s.key) : undefined}
+                  onRemove={stops.length > minStops ? () => remove(s.key) : undefined}
                 />
               ))}
               {stops.length < MAX_STOPS ? (
@@ -332,6 +353,23 @@ export default function TrailBuilderScreen() {
                   A trail can have up to {MAX_STOPS} stops.
                 </ThemedText>
               )}
+
+              <View style={[styles.loopRow, { backgroundColor: theme.backgroundElement }]}>
+                <View style={styles.flex}>
+                  <ThemedText type="defaultBold">Finish where you started</ThemedText>
+                  <ThemedText type="small" themeColor="textSecondary">
+                    The last stop is back at stop 1, so the trail comes full circle.
+                  </ThemedText>
+                </View>
+                <Switch
+                  value={loop}
+                  onValueChange={toggleLoop}
+                  trackColor={{ false: theme.backgroundSelected, true: theme.primary }}
+                  thumbColor={theme.onPrimary}
+                  ios_backgroundColor={theme.backgroundSelected}
+                  accessibilityLabel="Finish where you started"
+                />
+              </View>
             </View>
 
             <View style={styles.section}>
@@ -399,7 +437,7 @@ export default function TrailBuilderScreen() {
             title={`Stop ${pickingIndex + 1}`}
             confirmLabel="Done"
             initialFence={picking.fence ?? previousFence(stops, pickingIndex)}
-            route={{ stops: stops.map((s) => s.fence), index: pickingIndex }}
+            route={{ stops: placedStops.map((s) => s.fence), index: pickingIndex }}
             onCancel={() => setPickingFor(null)}
             onConfirm={(fence) => {
               update(picking.key, { fence });
@@ -427,6 +465,7 @@ function previousFence(stops: StopDraft[], index: number): Geofence | undefined 
 
 function StopEditor({
   stop: s,
+  loopEnd,
   index: i,
   count,
   mode,
@@ -438,6 +477,8 @@ function StopEditor({
   onRemove,
 }: {
   stop: StopDraft;
+  /** The last stop of a loop: its place is stop 1's and is not chosen here. */
+  loopEnd: boolean;
   index: number;
   count: number;
   mode: TrailRevealMode;
@@ -478,7 +519,7 @@ function StopEditor({
         </View>
         <View style={styles.stopSummary}>
           <ThemedText type="defaultBold" numberOfLines={1}>
-            {s.fence?.label || (i === 0 ? 'Where it starts' : last ? 'Where it ends' : `Stop ${i + 1}`)}
+            {(loopEnd ? 'Back to the start' : s.fence?.label) || (i === 0 ? 'Where it starts' : last ? 'Where it ends' : `Stop ${i + 1}`)}
           </ThemedText>
           {!open ? (
             <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
@@ -493,7 +534,13 @@ function StopEditor({
 
       {open ? (
         <View style={styles.stopFields}>
-          {s.fence ? (
+          {loopEnd ? (
+            <ThemedText type="small" themeColor="textSecondary">
+              {s.fence
+                ? `Back at ${s.fence.label}, where it started.`
+                : 'Back where it started. Choose a place for stop 1 first.'}
+            </ThemedText>
+          ) : s.fence ? (
             <View style={styles.placeRow}>
               <FenceChip fence={s.fence} />
               <Pressable onPress={onPickPlace} hitSlop={8}>
@@ -779,6 +826,14 @@ const styles = StyleSheet.create({
     borderRadius: Radius.large,
     borderWidth: 1,
     borderStyle: 'dashed',
+  },
+  loopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.three,
+    padding: Spacing.three,
+    borderRadius: Radius.large,
+    marginTop: Spacing.two,
   },
   footer: {
     paddingHorizontal: Spacing.four,

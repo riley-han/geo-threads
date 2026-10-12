@@ -11,7 +11,7 @@ import { TrailMap } from '@/components/trail-map';
 import type { TrailMapStop, TrailMapStopState } from '@/components/trail-map.types';
 import { TrailFollowers, TrailNextStep } from '@/components/trail-status';
 import { Fonts, Radius, Spacing } from '@/constants/theme';
-import type { Message, TrailRevealMode } from '@/data/types';
+import { fenceKey, type Message, type TrailRevealMode } from '@/data/types';
 import { useTheme } from '@/hooks/use-theme';
 import { formatMoment } from '@/lib/format-moment';
 import { formatDistance, routeMeters } from '@/lib/geo';
@@ -183,8 +183,19 @@ const MODE_LABEL: Record<TrailRevealMode, string> = {
 
 function routeCaption(stops: TrailMapStop[], hidden: number, total: number): string {
   const length = routeMeters(stops.map((s) => s.fence));
+  // A loop shows itself once its last stop does: the route closes on stop 1.
+  const first = stops[0]?.fence;
+  const end = stops[stops.length - 1]?.fence;
+  const loop =
+    stops.length >= 3 &&
+    stops[stops.length - 1].step === total &&
+    first != null &&
+    end != null &&
+    fenceKey(first) === fenceKey(end);
   const shown =
-    stops.length > 1 ? `About ${formatDistance(length)} between stops as the crow flies` : '';
+    stops.length > 1
+      ? `${loop ? 'A loop, about' : 'About'} ${formatDistance(length)} between stops as the crow flies`
+      : '';
   if (hidden === 0) return shown || `${total} stops`;
   const rest = `${hidden} more ${hidden === 1 ? 'stop appears' : 'stops appear'} as you go`;
   return shown ? `${shown}. ${rest}.` : `${rest}.`;
