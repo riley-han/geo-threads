@@ -16,6 +16,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 const MIGRATIONS = join(dirname(fileURLToPath(import.meta.url)), '..', 'migrations');
 
@@ -67,6 +68,25 @@ const denied = async (label, thunk) => {
 const allowed = async (label, thunk) => {
   try { const r = await thunk(); ok(label); return r; }
   catch (e) { bad(`${label} — UNEXPECTEDLY BLOCKED (${msg(e)})`); }
+};
+
+// Messages and unlocks are written only through functions (see the hardening
+// migration). These are the calls the client makes.
+const send = async (convo, body, fence = null) => {
+  const id = randomUUID();
+  await db.query(`select public.send_message($1,$2,$3,$4,$5,$6,$7)`,
+    [id, convo, body, fence?.[0] ?? null, fence?.[1] ?? null, fence?.[2] ?? null, fence?.[3] ?? null]);
+  return id;
+};
+const unlock = async (messageId, lat, lng, accuracy = null) =>
+  (await db.query(`select public.unlock_message($1,$2,$3,$4) as r`, [messageId, lat, lng, accuracy])).rows[0].r;
+// An unlock that must come back with this status (it is a result, not an error).
+const unlockIs = async (label, status, messageId, lat, lng = -122.4, accuracy = null) => {
+  try {
+    const r = await unlock(messageId, lat, lng, accuracy);
+    r?.status === status ? ok(label) : bad(`${label} — got ${r?.status}`);
+    return r;
+  } catch (e) { bad(`${label} — threw (${msg(e)})`); }
 };
 
 console.log('\n\x1b[1m── signup trigger ──\x1b[0m');
@@ -141,42 +161,66 @@ await asUser(alice, () => denied('RPC refuses a conversation with nobody else in
 console.log('\n\x1b[1m── messages ──\x1b[0m');
 let mid;
 await asUser(alice, async () => {
-  const r = await allowed('alice sends a fenced message and reads it back',
-    () => db.query(`insert into public.messages (conversation_id,sender_id,body,fence_latitude,fence_longitude,fence_radius_meters,fence_label)
-      values ($1,$2,'meet me here',37.7749,-122.4194,150,'Dolores Park') returning id, fence_key`,[convo,alice]));
-  mid = r?.rows?.[0]?.id;
+  mid = await allowed('alice sends a fenced message with send_message',
+    () => send(convo, 'meet me here', [37.7749, -122.4194, 150, 'Dolores Park']));
+  const sealed = (await db.query(`select body from public.message_sealed where message_id=$1`,[mid])).rows;
+  sealed[0]?.body === 'meet me here' ? ok('alice (sender) reads her own sealed text') : bad(`alice read ${JSON.stringify(sealed)}`);
+  const again = await db.query(`select public.send_message($1,$2,'meet me here',37.7749,-122.4194,150,'Dolores Park') as t`,[mid,convo]);
+  const n = (await db.query(`select count(*)::int as n from public.messages where id=$1`,[mid])).rows[0].n;
+  again.rows.length === 1 && n === 1 ? ok('retrying a send with the same id is a no-op') : bad(`retry made ${n} rows`);
 });
 await asUser(bob, async () => {
-  const r = await db.query(`select body from public.messages where conversation_id=$1`,[convo]);
-  r.rows.length === 1 ? ok('bob (participant) reads the message') : bad(`bob saw ${r.rows.length} messages, expected 1`);
+  const r = await db.query(`select body, fence_latitude from public.messages where conversation_id=$1`,[convo]);
+  r.rows.length === 1 ? ok('bob (participant) reads the message row') : bad(`bob saw ${r.rows.length} messages, expected 1`);
+  r.rows[0]?.body === null && r.rows[0]?.fence_latitude != null
+    ? ok("the shared row carries the fence but not the locked text")
+    : bad(`bob's row carries body ${JSON.stringify(r.rows[0]?.body)}`);
 });
+await asUser(bob, () => denied('bob reading the sealed text before unlocking',
+  () => db.query(`select * from public.message_sealed where message_id=$1`,[mid])));
 await asUser(carol, () => denied("carol reading the thread's messages",
   () => db.query(`select * from public.messages where conversation_id=$1`,[convo])));
 await asUser(carol, () => denied('carol posting into their thread',
-  () => db.query(`insert into public.messages (conversation_id,sender_id,body) values ($1,$2,'hi')`,[convo,carol])));
-await asUser(bob, () => denied('bob spoofing a message as alice',
-  () => db.query(`insert into public.messages (conversation_id,sender_id,body) values ($1,$2,'fake')`,[convo,alice])));
+  () => send(convo, 'hi')));
+await asUser(bob, () => denied('bob inserting into messages directly',
+  () => db.query(`insert into public.messages (conversation_id,sender_id,body) values ($1,$2,'fake')`,[convo,bob])));
+await asUser(bob, () => denied('bob backdating a message with a direct insert',
+  () => db.query(`insert into public.messages (conversation_id,sender_id,body,sent_at) values ($1,$2,'old','2001-01-01')`,[convo,bob])));
 await asUser(bob, () => denied("bob deleting alice's message",
   () => db.query(`delete from public.messages where id=$1 returning id`,[mid])));
 
 console.log('\n\x1b[1m── fence_key parity with the client\'s fenceKey() ──\x1b[0m');
+const keyed = {};
 const jsKey = (lat,lng,r) => `${lat.toFixed(5)}:${lng.toFixed(5)}:${Math.round(r)}`;
 for (const [lat,lng,r,label] of [[37.7749,-122.4194,150,'typical'],[7.5,-0.5,3000.6,'single digit / negative / rounding'],[0,0,1,'zero'],[-89.123456,179.987654,99999,'extremes']]) {
-  await asUser(alice, () => db.query(`insert into public.messages (conversation_id,sender_id,body,fence_latitude,fence_longitude,fence_radius_meters)
-    values ($1,$2,$3,$4,$5,$6)`,[convo,alice,`k:${label}`,lat,lng,r]));
-  const pg = (await db.query(`select fence_key from public.messages where body=$1`,[`k:${label}`])).rows[0].fence_key;
+  const kid = await asUser(alice, () => send(convo, `k:${label}`, [lat, lng, r, null]));
+  keyed[label] = kid;
+  const pg = (await db.query(`select fence_key from public.messages where id=$1`,[kid])).rows[0].fence_key;
   const js = jsKey(lat,lng,r);
   pg === js ? ok(`${label}: ${pg}`) : bad(`${label}: postgres ${pg} ≠ javascript ${js}`);
 }
-await asUser(alice, () => db.query(`insert into public.messages (conversation_id,sender_id,body) values ($1,$2,'unfenced')`,[convo,alice]));
+await asUser(alice, () => send(convo, 'unfenced'));
 const nullKey = (await db.query(`select fence_key from public.messages where body='unfenced'`)).rows[0].fence_key;
 nullKey === null ? ok('an unfenced message gets a null fence_key') : bad(`unfenced message got key ${nullKey}`);
 
 console.log('\n\x1b[1m── message_unlocks (per-reader state) ──\x1b[0m');
-await asUser(bob, () => allowed('bob records his own unlock',
-  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2) returning unlocked_at`,[mid,bob])));
+await asUser(bob, () => denied('bob inserting an unlock directly (no position)',
+  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`,[mid,bob])));
+await asUser(bob, () => unlockIs('bob unlocking from across town: not_here', 'not_here', mid, 37.70, -122.4194));
+await asUser(bob, () => denied('an unlock with no position at all',
+  () => unlock(mid, null, null)));
+await asUser(bob, async () => {
+  const r = await unlockIs('bob unlocks standing at the place', 'unlocked', mid, 37.7749, -122.4194);
+  r?.body === 'meet me here' ? ok('the unlock returns the sealed text') : bad(`unlock returned body ${r?.body}`);
+  const sealed = (await db.query(`select body from public.message_sealed where message_id=$1`,[mid])).rows.length;
+  sealed === 1 ? ok('bob reads the sealed text once unlocked') : bad('bob still cannot read the text');
+});
+// keyed.typical: 150 m around 37.7749,-122.4194. +0.0015° latitude is ~167 m out.
+await asUser(bob, () => unlockIs('167 m out with a perfect fix: not_here', 'not_here', keyed.typical, 37.7764, -122.4194, 0));
+await asUser(bob, () => unlockIs('a 100 m accuracy still buys only 25 m: 190 m out is not_here', 'not_here', keyed.typical, 37.7766, -122.4194, 100));
+await asUser(bob, () => unlockIs('167 m out with a 30 m accuracy: inside the slack, unlocked', 'unlocked', keyed.typical, 37.7764, -122.4194, 30));
 await asUser(carol, () => denied('carol unlocking a message in a thread she is not in',
-  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`,[mid,carol])));
+  () => unlock(mid, 37.7749, -122.4194)));
 await asUser(alice, async () => {
   const r = await db.query(`select user_id from public.message_unlocks where message_id=$1`,[mid]);
   r.rows.length === 1 && r.rows[0].user_id === bob
@@ -232,11 +276,9 @@ await asUser(dave, () => db.query(`update public.friendships set status='accepte
 let group, gmid;
 await asUser(alice, async () => {
   group = (await db.query(`select public.create_conversation(array[$1,$2]::uuid[]) as id`,[bob,dave])).rows[0].id;
-  gmid = (await db.query(`insert into public.messages (conversation_id,sender_id,body,fence_latitude,fence_longitude,fence_radius_meters,fence_label)
-    values ($1,$2,'group hunt',37.8,-122.4,100,'Pier 39') returning id`,[group,alice])).rows[0].id;
+  gmid = await send(group, 'group hunt', [37.8, -122.4, 100, 'Pier 39']);
 });
-await asUser(bob, () => allowed('bob unlocks the group message',
-  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2) returning unlocked_at`,[gmid,bob])));
+await asUser(bob, () => unlockIs('bob unlocks the group message', 'unlocked', gmid, 37.8));
 await asUser(dave, () => denied("dave (another group member, not the sender) reading bob's unlock",
   () => db.query(`select * from public.message_unlocks where message_id=$1`,[gmid])));
 await asUser(alice, async () => {
@@ -247,14 +289,14 @@ await asUser(alice, async () => {
     ? ok('unlocked_at is coarsened to the minute')
     : bad(`unlocked_at not coarsened: ${at}`);
 });
-await asUser(bob, () => db.query(`insert into public.message_unlocks (message_id,user_id,unlocked_at) values ($1,$2,'2001-01-01T00:00:00Z')`,[mid,bob])
-  .catch(() => null)); // already unlocked: a conflict is fine
+await asUser(dave, () => denied('dave backdating an unlock with a direct insert',
+  () => db.query(`insert into public.message_unlocks (message_id,user_id,unlocked_at) values ($1,$2,'2001-01-01T00:00:00Z')`,[gmid,dave])));
 await asUser(dave, async () => {
-  await db.query(`insert into public.message_unlocks (message_id,user_id,unlocked_at) values ($1,$2,'2001-01-01T00:00:00Z')`,[gmid,dave]);
+  await unlock(gmid, 37.8, -122.4);
   const r = await db.query(`select unlocked_at from public.message_unlocks where message_id=$1 and user_id=$2`,[gmid,dave]);
   new Date(r.rows[0].unlocked_at).getUTCFullYear() > 2001
-    ? ok('a client-supplied unlocked_at is replaced by the server clock')
-    : bad('client backdated its unlock');
+    ? ok('unlocked_at comes from the server clock')
+    : bad('unlock carries a client time');
 });
 
 await asUser(bob, () => allowed('bob turns receipts off',
@@ -271,7 +313,7 @@ await asUser(alice, async () => {
 });
 await asUser(bob, async () => {
   const r = await db.query(`select * from public.message_unlocks where user_id=$1`,[bob]);
-  r.rows.length === 2 ? ok('bob still sees his own unlocks with receipts off') : bad(`bob sees ${r.rows.length} of his 2 unlocks`);
+  r.rows.length === 3 ? ok('bob still sees his own unlocks with receipts off') : bad(`bob sees ${r.rows.length} of his 3 unlocks`);
 });
 await asUser(bob, () => db.query(`update public.profiles set share_unlock_receipts=true where id=$1`,[bob]));
 
@@ -301,7 +343,7 @@ await asUser(alice, () => denied('register_push_token rejects an unknown platfor
 
 console.log('\n\x1b[1m── message_reactions ──\x1b[0m');
 const unfenced = (await db.query(`select id from public.messages where body='unfenced'`)).rows[0].id;
-const lockedForBob = (await db.query(`select id from public.messages where body='k:typical'`)).rows[0].id;
+const lockedForBob = keyed.zero;
 await asUser(bob, () => allowed('bob reacts to an open message',
   () => db.query(`insert into public.message_reactions (message_id,user_id,emoji) values ($1,$2,'❤️') returning emoji`,[unfenced,bob])));
 await asUser(bob, () => allowed('bob reacts to a fenced message he has unlocked',
@@ -389,12 +431,16 @@ await asUser(bob, async () => {
   inbox === 1 ? ok('hidden stops are absent from a thread-wide query too') : bad(`thread query returned ${inbox} trail rows`);
 });
 await asUser(bob, () => denied('bob unlocking stop 2 before stop 1',
-  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [pin2, bob])));
-await asUser(bob, () => allowed('bob unlocks stop 1',
-  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2) returning message_id`, [pin1, bob])));
+  () => unlock(pin2, 37.71, -122.4)));
+await asUser(bob, () => denied("bob reading stop 1's text before finding it",
+  () => db.query(`select * from public.message_sealed where message_id=$1`, [pin1])));
+await asUser(bob, () => unlockIs('bob cannot unlock stop 1 from the couch', 'not_here', pin1, 37.0));
+await asUser(bob, () => unlockIs('bob unlocks stop 1 at the place', 'unlocked', pin1, 37.70));
 await asUser(bob, async () => {
   const v = await visibleSteps(pinTrail);
   JSON.stringify(v) === '[1,2]' ? ok('unlocking stop 1 reveals stop 2 (pin mode), not stop 3') : bad(`bob sees stops ${v}`);
+  const s2 = (await db.query(`select * from public.message_sealed where message_id=$1`, [pin2])).rows.length;
+  s2 === 0 ? ok("stop 2's pin is revealed, but not its text") : bad("stop 2's text leaked with its pin");
 });
 await asUser(carol, async () => {
   const v = (await db.query(`select count(*)::int as n from public.messages where trail_id=$1`, [pinTrail])).rows[0].n;
@@ -412,11 +458,11 @@ await asUser(alice, async () => {
 });
 const clue1 = await asUser(alice, () => stepId(clueTrail, 1));
 const clue2 = await asUser(alice, () => stepId(clueTrail, 2));
-await asUser(bob, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [clue1, bob]));
+await asUser(bob, () => unlock(clue1, 37.80, -122.4));
 await asUser(bob, async () => {
   const v = await visibleSteps(clueTrail);
   JSON.stringify(v) === '[1]' ? ok('clue mode: unlocking stop 1 does NOT reveal stop 2') : bad(`bob sees stops ${v}`);
-  const c = (await db.query(`select next_clue from public.messages where id=$1`, [clue1])).rows[0]?.next_clue;
+  const c = (await db.query(`select next_clue from public.message_sealed where message_id=$1`, [clue1])).rows[0]?.next_clue;
   c === 'where we met' ? ok("bob reads stop 1's clue to stop 2") : bad(`clue was ${c}`);
   const far = (await db.query(`select public.check_in_trail_step($1,2,37.0,-122.4) as s`, [clueTrail])).rows[0].s;
   far === 'not_here' ? ok('check-in far away: not_here') : bad(`far check-in returned ${far}`);
@@ -433,9 +479,13 @@ await asUser(dave, async () => {
 });
 await asUser(dave, () => denied('dave checking in to stop 2 before finding stop 1',
   () => db.query(`select public.check_in_trail_step($1,2,37.81,-122.4) as s`, [clueTrail])));
-await asUser(dave, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [clue1, dave]));
-await asUser(dave, () => denied('dave inserting an unlock for hidden clue stop 2 directly (bypassing check-in)',
-  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [clue2, dave])));
+await asUser(dave, async () => {
+  const c = (await db.query(`select * from public.message_sealed where message_id=$1`, [clue1])).rows.length;
+  c === 0 ? ok("dave cannot read stop 1's clue before finding stop 1") : bad("stop 1's clue leaked to dave");
+});
+await asUser(dave, () => unlock(clue1, 37.80, -122.4));
+await asUser(dave, () => denied('dave unlocking hidden clue stop 2 with unlock_message (bypassing check-in)',
+  () => unlock(clue2, 37.81, -122.4)));
 await asUser(carol, () => denied('carol checking in to a trail in a thread she is not in',
   () => db.query(`select public.check_in_trail_step($1,1,37.80,-122.4) as s`, [clueTrail])));
 await asUser(dave, async () => {
@@ -483,18 +533,15 @@ await asUser(alice, async () => {
 const win1 = await asUser(alice, () => stepId(windowTrail, 1));
 const win2 = await asUser(alice, () => stepId(windowTrail, 2));
 const win3 = await asUser(alice, () => stepId(windowTrail, 3));
-await asUser(bob, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [win1, bob]));
+await asUser(bob, () => unlock(win1, 37.60, -122.4));
 await asUser(bob, async () => {
   const v = await visibleSteps(windowTrail);
   JSON.stringify(v) === '[1,2]' ? ok('a stop that has not opened is still visible once earned') : bad(`bob sees ${v}`);
 });
-await asUser(bob, () => denied('bob unlocking stop 2 before it opens',
-  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [win2, bob])));
+await asUser(bob, () => unlockIs('bob at stop 2 before it opens: not_open', 'not_open', win2, 37.61));
 await db.query(`update public.messages set opens_at = now() - interval '1 minute' where id=$1`, [win2]);
-await asUser(bob, () => allowed('bob unlocks stop 2 once it has opened',
-  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2) returning message_id`, [win2, bob])));
-await asUser(bob, () => denied('bob unlocking stop 3 after it closed',
-  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [win3, bob])));
+await asUser(bob, () => unlockIs('bob unlocks stop 2 once it has opened', 'unlocked', win2, 37.61));
+await asUser(bob, () => unlockIs('bob at stop 3 after it closed: closed', 'closed', win3, 37.62));
 await asUser(alice, () => denied('a time window on an ordinary message',
   () => db.query(`insert into public.messages (conversation_id,sender_id,body,opens_at) values ($1,$2,'x',now())`, [convo, alice])));
 await asUser(alice, () => denied('a window that closes before it opens',
@@ -508,7 +555,7 @@ await asUser(alice, async () => {
   ])])).rows[0].id;
 });
 const late1 = await asUser(alice, () => stepId(lateClue, 1));
-await asUser(bob, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2) on conflict do nothing`, [late1, bob]));
+await asUser(bob, () => unlock(late1, 37.50, -122.4));
 await asUser(bob, async () => {
   const far = (await db.query(`select public.check_in_trail_step($1,2,37.0,-122.4) as s`, [lateClue])).rows[0].s;
   const here = (await db.query(`select public.check_in_trail_step($1,2,37.51,-122.4) as s`, [lateClue])).rows[0].s;
@@ -530,7 +577,7 @@ await asUser(alice, async () => {
 });
 const hint1 = await asUser(alice, () => stepId(hintTrail, 1));
 const hint2 = await asUser(alice, () => stepId(hintTrail, 2));
-await asUser(bob, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [hint1, bob]));
+await asUser(bob, () => unlock(hint1, 37.40, -122.4));
 await asUser(bob, async () => {
   const r = (await db.query(`select public.use_trail_hint($1,2) as s`, [hintTrail])).rows[0].s;
   r === 'too_soon' ? ok('a hint right after finding stop 1 is too_soon') : bad(`hint returned ${r}`);
@@ -544,8 +591,7 @@ await asUser(bob, async () => {
   const v = await visibleSteps(hintTrail);
   JSON.stringify(v) === '[1,2]' ? ok("the hinted stop's row (and pin) is now visible to bob") : bad(`bob sees ${v}`);
 });
-await asUser(bob, () => allowed('bob unlocks the hinted stop like a pin-mode stop',
-  () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2) returning message_id`, [hint2, bob])));
+await asUser(bob, () => unlockIs('bob unlocks the hinted stop like a pin-mode stop', 'unlocked', hint2, 37.41));
 await asUser(dave, async () => {
   const v = await visibleSteps(hintTrail);
   JSON.stringify(v) === '[1]' ? ok("bob's hint reveals nothing to dave") : bad(`dave sees ${v}`);
@@ -576,8 +622,8 @@ await asUser(alice, async () => {
 const race1 = await asUser(alice, () => stepId(raceTrail, 1));
 const race2 = await asUser(alice, () => stepId(raceTrail, 2));
 for (const who of [bob, dave]) {
-  await asUser(who, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [race1, who]));
-  await asUser(who, () => db.query(`insert into public.message_unlocks (message_id,user_id) values ($1,$2)`, [race2, who]));
+  await asUser(who, () => unlock(race1, 37.30, -122.4));
+  await asUser(who, () => unlock(race2, 37.31, -122.4));
 }
 // dave finished first.
 await db.query(`update public.message_unlocks set unlocked_at = now() - interval '10 minutes' where message_id=$1 and user_id=$2`, [race2, dave]);
@@ -607,30 +653,101 @@ await asUser(dave, async () => {
 });
 await db.query(`update public.profiles set share_unlock_receipts=true where id=$1`, [dave]);
 
+console.log('\n\x1b[1m── hardening: write paths RLS alone did not close ──\x1b[0m');
+const erin = (await db.query(`insert into auth.users (email, raw_user_meta_data) values ('erin@example.com','{"name":"Erin","handle":"erin"}') returning id`)).rows[0].id;
+await asUser(erin, async () => {
+  const r = (await db.query(`select id from public.profiles`)).rows;
+  r.length === 1 && r[0].id === erin ? ok('a newcomer sees only her own profile, not the directory') : bad(`erin sees ${r.length} profiles`);
+  const found = (await db.query(`select handle from public.search_profiles('ali')`)).rows.map((x) => x.handle);
+  found.includes('alice') ? ok('search_profiles finds alice by part of her name') : bad(`search found ${found}`);
+  const short = (await db.query(`select * from public.search_profiles('a')`)).rows.length;
+  short === 0 ? ok('a one-character search returns nothing') : bad(`one-character search returned ${short}`);
+  const self = (await db.query(`select * from public.search_profiles('erin')`)).rows.length;
+  self === 0 ? ok('search leaves the caller out') : bad('search returned the caller');
+  const wild = (await db.query(`select * from public.search_profiles('%%')`)).rows.length;
+  wild === 0 ? ok('LIKE wildcards in a search are literal') : bad(`'%%' matched ${wild} profiles`);
+});
+await asUser(erin, () => denied('erin sending a request to bob that is born accepted',
+  () => db.query(`insert into public.friendships (requester_id,addressee_id,status) values ($1,$2,'accepted')`,[erin,bob])));
+await asUser(erin, () => allowed('erin sends bob an ordinary request',
+  () => db.query(`insert into public.friendships (requester_id,addressee_id) values ($1,$2)`,[erin,bob])));
+await asUser(bob, async () => {
+  const r = (await db.query(`select id from public.profiles where id=$1`,[erin])).rows.length;
+  r === 1 ? ok('bob can see who sent him a request') : bad('bob cannot see the requester');
+});
+await asUser(bob, () => denied('bob (addressee) rewriting requester_id to carol',
+  () => db.query(`update public.friendships set requester_id=$1, status='accepted' where requester_id=$2 returning id`,[carol,erin])));
+await asUser(bob, () => db.query(`delete from public.friendships where requester_id=$1`,[erin]));
+
+let aliceDave;
+await asUser(alice, async () => {
+  aliceDave = (await db.query(`select public.create_conversation(array[$1]::uuid[]) as id`,[dave])).rows[0].id;
+});
+await asUser(bob, () => denied("bob moving his participant row into alice and dave's thread",
+  () => db.query(`update public.conversation_participants set conversation_id=$1 where conversation_id=$2 and user_id=$3 returning user_id`,[aliceDave,convo,bob])));
+await asUser(bob, async () => {
+  const r = (await db.query(`select public.mark_conversation_read($1) as at`,[convo])).rows[0].at;
+  const row = (await db.query(`select last_read_at from public.conversation_participants where conversation_id=$1 and user_id=$2`,[convo,bob])).rows[0];
+  r && row?.last_read_at && +new Date(row.last_read_at) === +new Date(r)
+    ? ok('mark_conversation_read stamps the server clock')
+    : bad(`mark read returned ${r}, row has ${row?.last_read_at}`);
+});
+await asUser(alice, () => denied('alice (creator) flipping is_group on a conversation',
+  () => db.query(`update public.conversations set is_group=true where id=$1 returning id`,[convo])));
+await asUser(alice, () => allowed('alice (creator) renames a conversation',
+  () => db.query(`update public.conversations set title='Us' where id=$1 returning id`,[convo])));
+await asUser(alice, () => denied('alice inserting a bare trail row with no stops',
+  () => db.query(`insert into public.trails (conversation_id,created_by,title,step_count) values ($1,$2,'empty',3)`,[convo,alice])));
+await asUser(alice, () => denied('alice writing message_sealed directly',
+  () => db.query(`insert into public.message_sealed (message_id,body) values ($1,'swap')`,[mid])));
+await asUser(alice, () => denied('alice changing her profile id',
+  () => db.query(`update public.profiles set id=gen_random_uuid() where id=$1 returning id`,[alice])));
+
+await asUser(erin, async () => {
+  const conv = (await db.query(`select count(*)::int as n from public.conversations`)).rows[0].n;
+  conv === 0 ? ok('erin is in no threads') : bad(`erin sees ${conv} threads`);
+});
+const rateLimited = await asUser(alice, () => send(group, 'rate limited', [10, 10, 50, null]));
+// Start dave's hour fresh; his earlier unlocks above count toward the same cap.
+await db.query(`delete from public.unlock_attempts where user_id=$1`, [dave]);
+await asUser(dave, async () => {
+  let last;
+  for (let i = 0; i < 60; i++) last = (await unlock(rateLimited, 0, 0)).status;
+  const capped = (await unlock(rateLimited, 10, 10)).status;
+  last === 'not_here' && capped === 'too_many'
+    ? ok('after 60 unlock attempts in an hour, even the right spot returns too_many')
+    : bad(`rate limit: last=${last} capped=${capped}`);
+});
+
+const noRls = (await db.query(`select tablename from pg_tables where schemaname='public' and not rowsecurity`)).rows;
+noRls.length === 0 ? ok('every public table has RLS enabled') : bad(`RLS off on ${noRls.map((r) => r.tablename)}`);
+await db.exec(`create table public.later_table (id int)`);
+const leaked = (await db.query(`select has_table_privilege('authenticated','public.later_table','select') as s`)).rows[0].s;
+leaked === false ? ok('a table added later starts with no grant to authenticated') : bad('new tables are granted to authenticated by default');
+await db.exec(`drop table public.later_table`);
+
 console.log('\n\x1b[1m── constraints ──\x1b[0m');
 await asUser(alice, async () => {
-  await denied('half-populated geofence (lat, no radius)',
-    () => db.query(`insert into public.messages (conversation_id,sender_id,body,fence_latitude) values ($1,$2,'x',37.0)`,[convo,alice]));
-  await denied('out-of-range latitude',
-    () => db.query(`insert into public.messages (conversation_id,sender_id,body,fence_latitude,fence_longitude,fence_radius_meters) values ($1,$2,'x',999,0,10)`,[convo,alice]));
-  await denied('zero-radius fence',
-    () => db.query(`insert into public.messages (conversation_id,sender_id,body,fence_latitude,fence_longitude,fence_radius_meters) values ($1,$2,'x',37,0,0)`,[convo,alice]));
+  await denied('half-populated geofence (lat, no radius)', () => send(convo, 'x', [37.0, null, null, null]));
+  await denied('out-of-range latitude', () => send(convo, 'x', [999, 0, 10, null]));
+  await denied('zero-radius fence', () => send(convo, 'x', [37, 0, 0, null]));
+  await denied('empty fenced body', () => send(convo, '', [37, 0, 10, null]));
   await denied('self-friendship', () => db.query(`insert into public.friendships (requester_id,addressee_id) values ($1,$1)`,[alice]));
   await denied('uppercase handle', () => db.query(`update public.profiles set handle='Alice' where id=$1 returning id`,[alice]));
-  await denied('empty message body', () => db.query(`insert into public.messages (conversation_id,sender_id,body) values ($1,$2,'')`,[convo,alice]));
+  await denied('empty message body', () => send(convo, ''));
   await denied('handle stolen from another user', () => db.query(`update public.profiles set handle='bob' where id=$1 returning id`,[alice]));
 });
 
 console.log('\n\x1b[1m── anon (signed-out) sees nothing ──\x1b[0m');
 await db.exec(`set role anon; select set_config('request.jwt.claim.sub','',false);`);
-for (const t of ['profiles','friendships','conversations','conversation_participants','messages','message_unlocks','push_tokens','message_reactions','push_log','trails','trail_check_ins','trail_hints']) {
+for (const t of ['profiles','friendships','conversations','conversation_participants','messages','message_unlocks','push_tokens','message_reactions','push_log','trails','trail_check_ins','trail_hints','message_sealed','unlock_attempts']) {
   await denied(`anon reading ${t}`, () => db.query(`select * from public.${t}`));
 }
 await db.exec(`reset role`);
 
 console.log('\n\x1b[1m── every policy-filtered column is indexed ──\x1b[0m');
 const idx = (await db.query(`select tablename, indexdef from pg_indexes where schemaname='public'`)).rows;
-for (const [t,c] of [['friendships','requester_id'],['friendships','addressee_id'],['conversations','created_by'],['conversation_participants','user_id'],['messages','conversation_id'],['messages','sender_id'],['message_unlocks','user_id'],['push_tokens','user_id'],['push_tokens','token'],['message_reactions','user_id'],['trails','conversation_id'],['trails','created_by'],['trail_hints','user_id']]) {
+for (const [t,c] of [['friendships','requester_id'],['friendships','addressee_id'],['conversations','created_by'],['conversation_participants','user_id'],['messages','conversation_id'],['messages','sender_id'],['message_unlocks','user_id'],['push_tokens','user_id'],['push_tokens','token'],['message_reactions','user_id'],['trails','conversation_id'],['trails','created_by'],['trail_hints','user_id'],['unlock_attempts','user_id']]) {
   idx.some(i => i.tablename===t && i.indexdef.includes(c)) ? ok(`${t}.${c}`) : bad(`${t}.${c} is NOT indexed — RLS will seq-scan`);
 }
 

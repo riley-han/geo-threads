@@ -16,6 +16,17 @@ export type MessageVisibility =
   | { kind: 'closed'; fence: Geofence; closedAt: number };
 
 /**
+ * What to say when the server refuses an unlock or a check-in. It measures the
+ * distance itself, so the app can think you are inside and still be told no.
+ */
+export const UNLOCK_REFUSED_COPY = {
+  not_here: 'Not quite. Keep looking.',
+  too_many: 'That is a lot of tries. Give it a little while.',
+  not_open: 'Right place. This stop has not opened yet.',
+  closed: 'Right place, but this stop has closed.',
+} as const;
+
+/**
  * Whether a message's time window allows unlocking now. Messages without a
  * window are always open. The server enforces this with its own clock; the
  * client uses it to label stops and to keep closed ones out of the geofences.

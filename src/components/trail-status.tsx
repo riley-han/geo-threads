@@ -8,7 +8,7 @@ import { useNow } from '@/hooks/use-now';
 import { useTheme } from '@/hooks/use-theme';
 import { formatMoment } from '@/lib/format-moment';
 import { formatDistance } from '@/lib/geo';
-import { messageVisibility } from '@/lib/message-visibility';
+import { messageVisibility, UNLOCK_REFUSED_COPY } from '@/lib/message-visibility';
 import type { CreatorProgress, FinderProgress } from '@/lib/trail-progress';
 import { useAuth } from '@/store/auth-store';
 import { useCurrentPosition } from '@/store/location-store';
@@ -100,8 +100,20 @@ function PinStep({
   const position = useCurrentPosition();
   const now = useNow();
   const { unlockMessage } = useMessageActions();
+  const [unlocking, setUnlocking] = useState(false);
+  const [status, setStatus] = useState<string | null>(null);
   const visibility = messageVisibility(message, position, now);
   const label = message.fence?.label ?? 'the next stop';
+
+  const unlock = async () => {
+    if (!position || unlocking) return;
+    setUnlocking(true);
+    setStatus(null);
+    const { result, error } = await unlockMessage(message.id, position);
+    setUnlocking(false);
+    if (error) setStatus(error);
+    else if (result && result !== 'unlocked') setStatus(UNLOCK_REFUSED_COPY[result]);
+  };
 
   return (
     <View style={[styles.panel, { backgroundColor: theme.backgroundElement }]}>
@@ -117,12 +129,17 @@ function PinStep({
 
       {visibility.kind === 'unlockable' ? (
         <Pressable
-          onPress={() => void unlockMessage(message.id)}
+          onPress={() => void unlock()}
+          disabled={unlocking}
           accessibilityRole="button"
           style={[styles.button, { backgroundColor: theme.accent }]}>
-          <ThemedText type="small" style={[styles.buttonText, { color: theme.onAccent }]}>
-            🔓 You&apos;re here. Unlock it
-          </ThemedText>
+          {unlocking ? (
+            <ActivityIndicator color={theme.onAccent} />
+          ) : (
+            <ThemedText type="small" style={[styles.buttonText, { color: theme.onAccent }]}>
+              🔓 You&apos;re here. Unlock it
+            </ThemedText>
+          )}
         </Pressable>
       ) : visibility.kind === 'locked' ? (
         <ThemedText type="small" style={[styles.strong, { color: theme.accentText }]}>
@@ -139,16 +156,11 @@ function PinStep({
           This stop closed {formatMoment(visibility.closedAt)}.
         </ThemedText>
       ) : null}
+
+      {status ? <ThemedText type="small">{status}</ThemedText> : null}
     </View>
   );
 }
-
-const CHECK_IN_COPY = {
-  not_here: 'Not quite. Keep looking.',
-  too_many: 'That is a lot of tries. Give it a little while.',
-  not_open: 'Right place. This stop has not opened yet.',
-  closed: 'Right place, but this stop has closed.',
-} as const;
 
 const HINT_COPY = {
   too_soon: 'Not yet. Try again a little later.',
@@ -194,7 +206,7 @@ function ClueStep({ trail, step, clue }: { trail: Trail; step: number; clue: str
     const { result, error } = await checkInTrailStep(trail.id, step, position);
     setChecking(false);
     if (error) setStatus(error);
-    else if (result && result !== 'unlocked') setStatus(CHECK_IN_COPY[result]);
+    else if (result && result !== 'unlocked') setStatus(UNLOCK_REFUSED_COPY[result]);
     // 'unlocked': the store refetches, the stop appears and this panel moves on.
   };
 

@@ -62,7 +62,7 @@ export default function PeopleScreen() {
     if (!myId || !isSearching) return;
 
     const timer = setTimeout(() => {
-      void searchProfiles(trimmed, myId).then(({ people, error }) =>
+      void searchProfiles(trimmed).then(({ people, error }) =>
         setAnswered({ query: trimmed, people, error }),
       );
     }, SEARCH_DEBOUNCE_MS);

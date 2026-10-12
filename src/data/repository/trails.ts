@@ -15,7 +15,8 @@ const TRAIL_SELECT = `
   hint_after_minutes,
   hints:trail_hints ( user_id, step ),
   stops:messages!messages_trail_id_fkey (
-    id, trail_step, next_clue,
+    id, trail_step,
+    sealed:message_sealed ( next_clue ),
     unlocks:message_unlocks ( user_id, unlocked_at )
   )
 `;

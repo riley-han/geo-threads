@@ -163,6 +163,32 @@ export type Database = {
           },
         ]
       }
+      message_sealed: {
+        Row: {
+          body: string
+          message_id: string
+          next_clue: string | null
+        }
+        Insert: {
+          body: string
+          message_id: string
+          next_clue?: string | null
+        }
+        Update: {
+          body?: string
+          message_id?: string
+          next_clue?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "message_sealed_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: true
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       message_unlocks: {
         Row: {
           message_id: string
@@ -198,7 +224,7 @@ export type Database = {
       }
       messages: {
         Row: {
-          body: string
+          body: string | null
           closes_at: string | null
           conversation_id: string
           fence_key: string | null
@@ -207,7 +233,6 @@ export type Database = {
           fence_longitude: number | null
           fence_radius_meters: number | null
           id: string
-          next_clue: string | null
           opens_at: string | null
           sender_id: string
           sent_at: string
@@ -215,7 +240,7 @@ export type Database = {
           trail_step: number | null
         }
         Insert: {
-          body: string
+          body?: string | null
           closes_at?: string | null
           conversation_id: string
           fence_key?: string | null
@@ -224,7 +249,6 @@ export type Database = {
           fence_longitude?: number | null
           fence_radius_meters?: number | null
           id?: string
-          next_clue?: string | null
           opens_at?: string | null
           sender_id: string
           sent_at?: string
@@ -232,7 +256,7 @@ export type Database = {
           trail_step?: number | null
         }
         Update: {
-          body?: string
+          body?: string | null
           closes_at?: string | null
           conversation_id?: string
           fence_key?: string | null
@@ -241,7 +265,6 @@ export type Database = {
           fence_longitude?: number | null
           fence_radius_meters?: number | null
           id?: string
-          next_clue?: string | null
           opens_at?: string | null
           sender_id?: string
           sent_at?: string
@@ -432,6 +455,42 @@ export type Database = {
           },
         ]
       }
+      unlock_attempts: {
+        Row: {
+          created_at: string
+          id: number
+          message_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: never
+          message_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: never
+          message_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "unlock_attempts_message_id_fkey"
+            columns: ["message_id"]
+            isOneToOne: false
+            referencedRelation: "messages"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "unlock_attempts_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       trails: {
         Row: {
           conversation_id: string
@@ -516,9 +575,34 @@ export type Database = {
         }
         Returns: string
       }
+      mark_conversation_read: {
+        Args: { p_conversation_id: string }
+        Returns: string
+      }
       register_push_token: {
         Args: { p_platform: string; p_token: string }
         Returns: undefined
+      }
+      search_profiles: {
+        Args: { p_query: string }
+        Returns: {
+          avatar_url: string | null
+          handle: string
+          id: string
+          name: string
+        }[]
+      }
+      send_message: {
+        Args: {
+          p_body: string
+          p_conversation_id: string
+          p_fence_label?: string
+          p_fence_latitude?: number
+          p_fence_longitude?: number
+          p_fence_radius_meters?: number
+          p_id: string
+        }
+        Returns: string
       }
       trail_finishers: {
         Args: { p_trail_id: string }
@@ -527,6 +611,15 @@ export type Database = {
           place: number
           user_id: string
         }[]
+      }
+      unlock_message: {
+        Args: {
+          p_accuracy?: number
+          p_latitude: number
+          p_longitude: number
+          p_message_id: string
+        }
+        Returns: Json
       }
       use_trail_hint: {
         Args: { p_step: number; p_trail_id: string }

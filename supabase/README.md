@@ -145,19 +145,45 @@ makes the pair unordered, so A→B and B→A cannot both exist.
 `fence_key` is set by trigger from the coordinates rather than supplied by the
 client, so it cannot drift from the fence it names. Do not write it.
 
-### A note on fenced messages
+### Fenced messages: sealed text, verified unlocks
 
-The `SELECT` policy on `messages` is deliberately **not** gated on the reader's
-position. A fenced message is delivered to the device and revealed by the client
-once it is in range, which is exactly what the local implementation does — but
-it means the body is on the device before the reader arrives, and a determined
-user could read it out of the local store or off the wire.
+A fenced message's row carries its coordinates but **not its text**. The body
+(and, on a trail stop, its clue to the next stop) lives in `message_sealed`,
+which RLS returns only to the sender and to readers who have unlocked the
+message. The device has what it needs to measure distance and draw the pin,
+and nothing to read early, whether from the local store or off the wire.
 
-If the fence needs to be a real secret rather than a UI affordance, the body has
-to stay server-side until arrival: withhold it from the row and serve it from an
-RPC that checks a position it can trust. That is a product decision about how
-much you trust the client, not an oversight — it is called out here so the
-choice stays visible.
+Clients cannot insert into `messages` or `message_unlocks`. Writes go through
+functions that check what the old policies checked, plus what they could not:
+
+- `send_message` posts as you, into a thread you are in, with the server's
+  `sent_at`, and seals the text of a fenced message. A retry with the same id
+  is a no-op.
+- `unlock_message(message_id, latitude, longitude, accuracy)` measures the
+  reported position against the fence itself (with up to 25 m of slack for the
+  fix's accuracy), applies time windows and trail order, caps attempts at 60 an
+  hour, and returns the sealed text with the unlock.
+
+What this still cannot do is tell a real position from a spoofed one. A faked
+GPS fix still unlocks. Being somewhere is self-reported. What the server now
+rules out is unlocking with no position or the wrong one, and scripting it.
+
+### Column-level update grants
+
+A policy's `WITH CHECK` sees only the new row, so it cannot stop a caller
+rewriting a column it does not mention. `authenticated` is therefore granted
+`UPDATE` on specific columns only: `friendships.status`,
+`conversation_participants.last_read_at` (written through
+`mark_conversation_read`, on the server clock), `conversations.title`, and the
+editable profile fields. New tables get no grants by default; each migration
+grants what it needs.
+
+### Profiles
+
+You can read your own profile, anyone you have a friendship row with (either
+direction, any status), and anyone you share a thread with. Finding someone
+new goes through `search_profiles`: at least two characters, at most 20
+results, never yourself.
 
 ### Why the `private` schema
 
@@ -219,11 +245,12 @@ progress read "Stop 2 of 5".
 Clue-mode stops can only be unlocked through `check_in_trail_step`, because
 the device never has their coordinates. It compares the reported position
 server-side and allows 30 attempts per person per trail per hour, so it
-can't be scripted to sweep for the pin. The unlock INSERT policy also requires
-the message to be visible, so stops can't be unlocked out of order.
+can't be scripted to sweep for the pin. `unlock_message` also requires the
+message to be visible, so stops can't be unlocked out of order.
 
 Trails are created with the `create_trail` RPC: the trail and all its stops in
-one transaction, through RLS (`SECURITY INVOKER`).
+one transaction. It is `SECURITY DEFINER`, since clients hold no insert on
+`messages` or `trails`, and checks that you are in the thread itself.
 
 **Time windows.** A stop may have `opens_at` and `closes_at`. These are
 absolute moments, so there is no time zone to store, and each viewer sees them

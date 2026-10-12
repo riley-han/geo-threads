@@ -27,7 +27,7 @@ import type {
 } from '@/data/types';
 import { fenceKey } from '@/data/types';
 import { clearMirror, mirrorOwner, replaceMirror, type MirroredMessage } from '@/db/fence-mirror';
-import type { Geofence, LatLng } from '@/lib/geo';
+import type { Fix, Geofence, LatLng } from '@/lib/geo';
 import { isWithinWindow } from '@/lib/message-visibility';
 import { useAuth } from '@/store/auth-store';
 
@@ -40,6 +40,7 @@ type Entry = { messages: Message[]; state: LoadState; error: string | null };
 
 export type CheckInOutcome = { result: repo.CheckInResult | null; error: string | null };
 export type HintOutcome = { result: repo.HintResult | null; error: string | null };
+export type UnlockOutcome = { result: repo.UnlockResult | null; error: string | null };
 
 type InboxFetch = {
   convos: Awaited<ReturnType<typeof repo.fetchConversations>>;
@@ -67,7 +68,8 @@ type MessagesApi = {
   sendMessage: (conversationId: string, body: string, fence?: Geofence) => Promise<SendResult>;
   createConversation: (participantIds: string[], title?: string) => Promise<CreateResult>;
   markRead: (conversationId: string) => Promise<void>;
-  unlockMessage: (messageId: string) => Promise<void>;
+  /** Unlock a fenced message by being there; the server checks `position` against the fence. */
+  unlockMessage: (messageId: string, position: Fix) => Promise<UnlockOutcome>;
   /** Sets, changes or (with null) removes your reaction. */
   reactToMessage: (messageId: string, emoji: Reaction | null) => Promise<SendResult>;
   createTrail: (args: {
@@ -308,7 +310,18 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
           const incoming = repo.messageFromRealtimeRow(row, sender, myId);
           const known = entry.messages.find((m) => m.id === incoming.id);
           // Our own send already upserted the real row; keep its local state.
-          upsertMessage(known ? { ...incoming, unlockedAt: known.unlockedAt, foundBy: known.foundBy } : incoming);
+          // The echo of a fenced message carries no text (it is sealed), so
+          // keep the text we already hold too.
+          upsertMessage(
+            known
+              ? {
+                  ...incoming,
+                  body: incoming.body || known.body,
+                  unlockedAt: known.unlockedAt,
+                  foundBy: known.foundBy,
+                }
+              : incoming,
+          );
         }
       }
       // Previews, unread state and pendingFenced (and so the geofences).
@@ -413,15 +426,9 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         status: 'sending',
       });
 
-      const { message, error } = await repo.createMessage({
-        id,
-        conversationId,
-        body,
-        fence,
-        myId,
-      });
+      const { sentAt, error } = await repo.createMessage({ id, conversationId, body, fence });
 
-      if (error || !message) {
+      if (error || sentAt == null) {
         // Keep the row so the text is not lost, but mark it so the bubble can
         // show it did not land.
         setEntries((prev) => {
@@ -438,11 +445,11 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         return { error: error ?? 'Message not sent.' };
       }
 
-      upsertMessage(message);
+      patchMessage(id, (m) => ({ ...m, sentAt, status: 'sent' }));
       void loadInbox();
       return { error: null };
     },
-    [myId, user, upsertMessage, loadInbox],
+    [myId, user, upsertMessage, patchMessage, loadInbox],
   );
 
   const createConversation = useCallback(
@@ -464,30 +471,29 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       setConversations((prev) =>
         prev.map((c) => (c.id === conversationId ? { ...c, unread: false } : c)),
       );
-      await repo.markConversationRead(conversationId, myId);
+      await repo.markConversationRead(conversationId);
     },
     [myId, conversations],
   );
 
   const unlockMessage = useCallback(
-    async (messageId: string) => {
-      if (!myId) return;
+    async (messageId: string, position: Fix): Promise<UnlockOutcome> => {
+      if (!myId) return { result: null, error: 'Not signed in.' };
+
+      const unlocked = findCached(messageId) ?? pendingFenced.find((m) => m.id === messageId);
+      // Nothing is revealed until the server agrees you are there: it holds the
+      // text, and hands it back with the unlock.
+      const { result, body, nextClue, error } = await repo.unlockMessage(messageId, position);
+      if (error || result !== 'unlocked') return { result, error };
 
       const at = Date.now();
-      setEntries((prev) => {
-        const next = new Map(prev);
-        for (const [cid, entry] of next) {
-          if (!entry.messages.some((m) => m.id === messageId)) continue;
-          next.set(cid, {
-            ...entry,
-            messages: entry.messages.map((m) =>
-              m.id === messageId && m.unlockedAt == null ? { ...m, unlockedAt: at } : m,
-            ),
-          });
-        }
-        return next;
-      });
-      // Drop it from the monitored set immediately; this also rewrites the
+      patchMessage(messageId, (m) => ({
+        ...m,
+        body: body ?? m.body,
+        unlockedAt: m.unlockedAt ?? at,
+        trail: m.trail ? { ...m.trail, nextClue: nextClue ?? m.trail.nextClue } : m.trail,
+      }));
+      // Drop it from the monitored set right away; this also rewrites the
       // mirror, so the background task stops alerting for a place already
       // visited even before the next refresh.
       applyPendingFenced(
@@ -495,18 +501,16 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         myId,
       );
 
-      const unlocked = findCached(messageId) ?? pendingFenced.find((m) => m.id === messageId);
-      const { error } = await repo.unlockMessage(messageId, myId);
-      if (error) {
-        void loadInbox();
-      } else if (unlocked?.trail) {
+      if (unlocked?.trail) {
         // In pin mode the next stop is now visible: fetch it, its pin, and
         // (through pendingFenced) its geofence.
         void loadMessages(unlocked.conversationId);
-        void loadInbox();
       }
+      // Previews show the text now, and trail progress has moved.
+      void loadInbox();
+      return { result, error: null };
     },
-    [myId, pendingFenced, applyPendingFenced, loadInbox, loadMessages, findCached],
+    [myId, pendingFenced, applyPendingFenced, patchMessage, loadInbox, loadMessages, findCached],
   );
 
   const createTrail = useCallback(

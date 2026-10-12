@@ -45,10 +45,13 @@ const AuthContext = createContext<AuthApi | null>(null);
 export function AuthProvider({
   children,
   onSignOut,
+  onSignOutFailed,
 }: {
   children: ReactNode;
   /** Runs before the session is torn down, for state that must not outlive it. */
   onSignOut?: () => Promise<void>;
+  /** Runs if sign-out then fails, to restore what onSignOut removed. */
+  onSignOutFailed?: () => Promise<void>;
 }) {
   const [session, setSession] = useState<Session | null>(null);
   // Tagged with the user it was loaded for, so signing out or switching account
@@ -154,6 +157,9 @@ export function AuthProvider({
         // background arrival name the previous account's sender.
         await onSignOut?.();
         const { error } = await supabase.auth.signOut();
+        // Still signed in (usually offline): put back what the teardown took
+        // away, or this device stays signed in but stops receiving pushes.
+        if (error) await onSignOutFailed?.();
         return { error: error ? messageOf(error) : null };
       },
 
@@ -183,7 +189,7 @@ export function AuthProvider({
 
       refreshProfile,
     }),
-    [session, profile, initializing, userId, refreshProfile, onSignOut],
+    [session, profile, initializing, userId, refreshProfile, onSignOut, onSignOutFailed],
   );
 
   return <AuthContext.Provider value={api}>{children}</AuthContext.Provider>;

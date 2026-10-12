@@ -28,7 +28,8 @@ export type MessageRowWithRefs = {
   id: string;
   conversation_id: string;
   sender_id: string;
-  body: string;
+  /** Null on a fenced message: its text is in `sealed`. */
+  body: string | null;
   sent_at: string;
   fence_latitude: number | null;
   fence_longitude: number | null;
@@ -40,11 +41,14 @@ export type MessageRowWithRefs = {
   reactions?: ReactionRow[] | null;
   trail_id?: string | null;
   trail_step?: number | null;
-  next_clue?: string | null;
+  /** Null unless this viewer may read the fenced text: the sender, or someone who has unlocked it. */
+  sealed?: SealedRow | null;
   opens_at?: string | null;
   closes_at?: string | null;
   trail?: TrailRefRow | null;
 };
+
+type SealedRow = { body: string; next_clue: string | null };
 
 type TrailRefRow = { id: string; title: string; reveal_mode: TrailRevealMode; step_count: number };
 
@@ -61,7 +65,7 @@ export type TrailRowWithStops = {
   stops: {
     id: string;
     trail_step: number | null;
-    next_clue: string | null;
+    sealed: { next_clue: string | null } | null;
     unlocks: { user_id: string; unlocked_at: string }[] | null;
   }[];
 };
@@ -142,7 +146,9 @@ export function toMessage(row: MessageRowWithRefs, myId: string): Message {
     conversationId: row.conversation_id,
     sender: row.sender ? toPerson(row.sender) : unknownPerson(row.sender_id),
     isMine,
-    body: row.body,
+    // Empty while a fenced message is still locked to this viewer. The UI never
+    // renders the text of a locked message, so there is nothing to show anyway.
+    body: row.body ?? row.sealed?.body ?? '',
     sentAt: toEpochMs(row.sent_at) ?? Date.now(),
     fence: toFence(row),
     // Not unlocks[0]: on your own message RLS also returns the finders' rows
@@ -165,7 +171,7 @@ function toTrailInfo(row: MessageRowWithRefs): TrailInfo | undefined {
     step: row.trail_step,
     total: row.trail.step_count,
     revealMode: row.trail.reveal_mode,
-    nextClue: row.next_clue ?? undefined,
+    nextClue: row.sealed?.next_clue ?? undefined,
   };
 }
 
@@ -185,7 +191,7 @@ export function toTrail(row: TrailRowWithStops): Trail {
       .map((s) => ({
         messageId: s.id,
         step: s.trail_step!,
-        nextClue: s.next_clue,
+        nextClue: s.sealed?.next_clue ?? null,
         unlocks: (s.unlocks ?? []).map((u) => ({
           personId: u.user_id,
           at: toEpochMs(u.unlocked_at) ?? 0,

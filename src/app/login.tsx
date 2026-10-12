@@ -55,6 +55,12 @@ export default function LoginScreen() {
       setError('Enter your name.');
       return;
     }
+    // The same rule the server applies (supabase/config.toml), checked here so
+    // the message is ours rather than the auth server's.
+    if (isSignUp && (password.length < 8 || !/[a-z]/i.test(password) || !/\d/.test(password))) {
+      setError('Use at least 8 characters, with a letter and a number.');
+      return;
+    }
 
     setBusy(true);
     try {

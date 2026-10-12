@@ -1,10 +1,10 @@
 import type { Reaction } from '@/data/reactions';
-import type { Geofence } from '@/lib/geo';
+import type { Fix, Geofence } from '@/lib/geo';
 import type { Message, Person } from '@/data/types';
 import { supabase } from '@/lib/supabase';
 
 import { describeError } from './errors';
-import { toMessage, type MessageRowWithRefs } from './mappers';
+import { toEpochMs, toMessage, type MessageRowWithRefs } from './mappers';
 
 /**
  * The sender profile is embedded so no call site has to resolve an id to a
@@ -13,6 +13,10 @@ import { toMessage, type MessageRowWithRefs } from './mappers';
  * finders who share them, which is why it carries `user_id` and the finder's
  * profile. The FK hints are required: `messages` and `message_unlocks` both
  * reference `profiles`, so PostgREST cannot infer either join.
+ *
+ * A fenced message's text is not on the row: `sealed` holds it, and RLS
+ * returns it only to the sender and to readers who have unlocked it. For
+ * everyone else it comes back null.
  */
 const MESSAGE_SELECT = `
   id, conversation_id, sender_id, body, sent_at,
@@ -23,7 +27,8 @@ const MESSAGE_SELECT = `
     finder:profiles!message_unlocks_user_id_fkey ( id, name, handle, avatar_url )
   ),
   reactions:message_reactions ( user_id, emoji ),
-  trail_id, trail_step, next_clue, opens_at, closes_at,
+  sealed:message_sealed ( body, next_clue ),
+  trail_id, trail_step, opens_at, closes_at,
   trail:trails!messages_trail_id_fkey ( id, title, reveal_mode, step_count )
 `;
 
@@ -73,57 +78,57 @@ export async function fetchPendingFenced(
   return { messages, error: null };
 }
 
+/**
+ * Sends through `send_message`, the only write path for messages. Returns the
+ * server's sent_at; the caller already holds everything else about the row.
+ */
 export async function createMessage(args: {
+  /** Client-generated, so the optimistic row, this insert and the realtime echo share one identity. */
   id: string;
   conversationId: string;
   body: string;
   fence?: Geofence;
-  myId: string;
-}): Promise<{ message: Message | null; error: string | null }> {
-  const { data, error } = await supabase
-    .from('messages')
-    .insert({
-      // Client-generated so the optimistic row, the returned row and the
-      // realtime echo all share one identity and every path is an upsert by id.
-      id: args.id,
-      conversation_id: args.conversationId,
-      sender_id: args.myId,
-      body: args.body,
-      // sent_at is deliberately omitted: the column default is the server clock,
-      // so a skewed device cannot reorder a thread.
-      // fence_key is deliberately omitted: a trigger derives it from the
-      // coordinates. Writing it here would let the two drift.
-      fence_latitude: args.fence?.latitude ?? null,
-      fence_longitude: args.fence?.longitude ?? null,
-      fence_radius_meters: args.fence?.radiusMeters ?? null,
-      fence_label: args.fence?.label ?? null,
-    })
-    .select(MESSAGE_SELECT)
-    .single();
+}): Promise<{ sentAt: number | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('send_message', {
+    p_id: args.id,
+    p_conversation_id: args.conversationId,
+    p_body: args.body,
+    p_fence_latitude: args.fence?.latitude,
+    p_fence_longitude: args.fence?.longitude,
+    p_fence_radius_meters: args.fence?.radiusMeters,
+    p_fence_label: args.fence?.label,
+  });
 
-  if (error) return { message: null, error: describeError(error, 'message') };
-  return { message: toMessage(data as unknown as MessageRowWithRefs, args.myId), error: null };
+  if (error) return { sentAt: null, error: describeError(error, 'message') };
+  return { sentAt: toEpochMs(data as string), error: null };
 }
 
+export type UnlockResult = 'unlocked' | 'not_here' | 'not_open' | 'closed' | 'too_many';
+
 /**
- * Records that this viewer reached the place. Upsert rather than insert: a
- * double tap, or the same account on a second device, is a primary-key conflict
- * on (message_id, user_id) rather than an error worth showing anyone.
+ * Unlocks by being there. The server measures the distance from `position` to
+ * the fence itself, then hands back the sealed text, so a successful unlock
+ * needs no refetch to show it.
  */
 export async function unlockMessage(
   messageId: string,
-  myId: string,
-): Promise<{ unlockedAt: number; error: string | null }> {
-  const now = Date.now();
-  const { error } = await supabase
-    .from('message_unlocks')
-    .upsert(
-      { message_id: messageId, user_id: myId },
-      { onConflict: 'message_id,user_id', ignoreDuplicates: true },
-    );
+  position: Fix,
+): Promise<{
+  result: UnlockResult | null;
+  body: string | null;
+  nextClue: string | null;
+  error: string | null;
+}> {
+  const { data, error } = await supabase.rpc('unlock_message', {
+    p_message_id: messageId,
+    p_latitude: position.latitude,
+    p_longitude: position.longitude,
+    p_accuracy: position.accuracy ?? undefined,
+  });
 
-  if (error) return { unlockedAt: now, error: describeError(error) };
-  return { unlockedAt: now, error: null };
+  if (error) return { result: null, body: null, nextClue: null, error: describeError(error) };
+  const r = (data ?? {}) as { status?: UnlockResult; body?: string | null; next_clue?: string | null };
+  return { result: r.status ?? null, body: r.body ?? null, nextClue: r.next_clue ?? null, error: null };
 }
 
 /**
@@ -184,6 +189,9 @@ export function messageFromRealtimeRow(
       // any unlock already known locally.
       unlocks: [],
       reactions: [],
+      // Realtime carries the shared row only, so a fenced message arrives
+      // without its text whoever you are.
+      sealed: null,
       // A realtime row has no embedded trail. Trail rows are refetched rather
       // than mapped from realtime (see onRemoteMessage), so none arrive here.
       trail: null,

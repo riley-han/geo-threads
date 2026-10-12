@@ -2,7 +2,7 @@ import type { Conversation } from '@/data/types';
 import { supabase } from '@/lib/supabase';
 
 import { describeError } from './errors';
-import { toConversation, type ConversationRowWithRefs } from './mappers';
+import { toConversation, toEpochMs, type ConversationRowWithRefs } from './mappers';
 
 /**
  * Participants come with their profiles so the inbox can title a thread without
@@ -22,7 +22,8 @@ const CONVERSATION_SELECT = `
     sender:profiles!messages_sender_id_fkey ( id, name, handle, avatar_url ),
     unlocks:message_unlocks ( user_id, unlocked_at ),
     reactions:message_reactions ( user_id, emoji ),
-    trail_id, trail_step, next_clue, opens_at, closes_at,
+    sealed:message_sealed ( body, next_clue ),
+    trail_id, trail_step, opens_at, closes_at,
     trail:trails!messages_trail_id_fkey ( id, title, reveal_mode, step_count )
   )
 `;
@@ -94,18 +95,18 @@ export async function createConversation(
   return { id: data as string, error: null };
 }
 
-/** Marking a thread read is an update to your own participant row. */
+/**
+ * Stamps your participant row with the server's clock. last_read_at is compared
+ * with sent_at, which is also the server's, so a device clock running slow
+ * cannot bring a thread back to unread.
+ */
 export async function markConversationRead(
   conversationId: string,
-  myId: string,
-): Promise<{ readAt: number; error: string | null }> {
-  const readAt = Date.now();
-  const { error } = await supabase
-    .from('conversation_participants')
-    .update({ last_read_at: new Date(readAt).toISOString() })
-    .eq('conversation_id', conversationId)
-    .eq('user_id', myId);
+): Promise<{ readAt: number | null; error: string | null }> {
+  const { data, error } = await supabase.rpc('mark_conversation_read', {
+    p_conversation_id: conversationId,
+  });
 
-  if (error) return { readAt, error: describeError(error) };
-  return { readAt, error: null };
+  if (error) return { readAt: null, error: describeError(error) };
+  return { readAt: toEpochMs(data as string), error: null };
 }
