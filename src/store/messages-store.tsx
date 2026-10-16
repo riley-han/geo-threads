@@ -57,6 +57,35 @@ async function fetchInbox(myId: string): Promise<InboxFetch> {
   return { convos, fenced, trails };
 }
 
+/**
+ * One reload at a time. A request made while a reload is in flight is not
+ * dropped (that reload may have been sent before the change that prompted the
+ * request) and does not race it (an older response could land last and
+ * overwrite a newer one). Every request made in the meantime shares one more
+ * reload queued behind the current one, so a burst of realtime events costs at
+ * most two fetches and the newest result is always the one applied last.
+ */
+function oneAtATime(load: () => Promise<void>): () => Promise<void> {
+  let current: Promise<void> | null = null;
+  let queued: Promise<void> | null = null;
+
+  const run = (): Promise<void> => {
+    if (!current) {
+      current = load().finally(() => {
+        current = null;
+      });
+      return current;
+    }
+    const again = () => {
+      queued = null;
+      return run();
+    };
+    queued ??= current.then(again, again);
+    return queued;
+  };
+  return run;
+}
+
 type MessagesApi = {
   conversations: Conversation[];
   pendingFenced: Message[];
@@ -109,7 +138,16 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   // a server.
   const [entries, setEntries] = useState<Map<string, Entry>>(new Map());
 
-  const inFlight = useRef(new Set<string>());
+  // False once this account's provider unmounts (sign-out remounts it), so a
+  // fetch that lands afterwards cannot rewrite the mirror for an old session.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
   // Read by the realtime and foreground handlers, which must not resubscribe
   // every time a message lands.
   const entriesRef = useRef(entries);
@@ -154,6 +192,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
    */
   const applyInbox = useCallback(
     (ownerId: string, { convos, fenced, trails: trailResult }: InboxFetch) => {
+      if (!alive.current) return;
       if (convos.error) {
         setInbox({ state: 'error', error: convos.error });
         return;
@@ -167,10 +206,19 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     [applyPendingFenced],
   );
 
-  const loadInbox = useCallback(async () => {
+  const fetchInboxInto = useCallback(async () => {
     if (!myId) return;
     applyInbox(myId, await fetchInbox(myId));
   }, [myId, applyInbox]);
+
+  // Realtime calls this for nearly every event, so it must coalesce. Built on
+  // first use; what it closes over is fixed for the provider's life, which is
+  // keyed by account.
+  const inboxLoader = useRef<(() => Promise<void>) | null>(null);
+  const loadInbox = useCallback(() => {
+    inboxLoader.current ??= oneAtATime(fetchInboxInto);
+    return inboxLoader.current();
+  }, [fetchInboxInto]);
 
   /** Manual retry: show the spinner, then reload. Never called from an effect body. */
   const refreshInbox = useCallback(async () => {
@@ -187,22 +235,15 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
     })();
   }, [db, myId]);
 
+  // Through loadInbox like every other path, so a realtime refresh that
+  // starts during this first load cannot be overwritten by it.
   useEffect(() => {
-    if (!myId) return;
-    let active = true;
-    void (async () => {
-      const result = await fetchInbox(myId);
-      if (active) applyInbox(myId, result);
-    })();
-    return () => {
-      active = false;
-    };
-  }, [myId, applyInbox]);
+    void loadInbox();
+  }, [loadInbox]);
 
-  const loadMessages = useCallback(
+  const fetchMessagesInto = useCallback(
     async (conversationId: string) => {
-      if (!myId || inFlight.current.has(conversationId)) return;
-      inFlight.current.add(conversationId);
+      if (!myId) return;
 
       setEntries((prev) => {
         const next = new Map(prev);
@@ -212,20 +253,46 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       });
 
       const { messages, error } = await repo.fetchMessages(conversationId, myId);
-      inFlight.current.delete(conversationId);
+      if (!alive.current) return;
 
       setEntries((prev) => {
         const next = new Map(prev);
+        const existing = next.get(conversationId) ?? EMPTY_ENTRY;
         next.set(
           conversationId,
           error
-            ? { messages: [], state: 'error', error }
-            : { messages, state: 'ready', error: null },
+            ? // A failed refresh (say, offline on resume) keeps what is on screen.
+              { ...existing, state: 'error', error }
+            : {
+                // A send still in flight is not on the server yet; keep it.
+                messages: [
+                  ...messages,
+                  ...existing.messages.filter(
+                    (m) => m.status === 'sending' && !messages.some((s) => s.id === m.id),
+                  ),
+                ],
+                state: 'ready',
+                error: null,
+              },
         );
         return next;
       });
     },
     [myId],
+  );
+
+  /** Per conversation, one reload at a time (see oneAtATime). */
+  const messageLoaders = useRef(new Map<string, () => Promise<void>>());
+  const loadMessages = useCallback(
+    (conversationId: string) => {
+      let load = messageLoaders.current.get(conversationId);
+      if (!load) {
+        load = oneAtATime(() => fetchMessagesInto(conversationId));
+        messageLoaders.current.set(conversationId, load);
+      }
+      return load();
+    },
+    [fetchMessagesInto],
   );
 
   // Realtime only delivers while the socket is up, so anything that landed
@@ -302,19 +369,26 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
 
       // Only splice into a thread already fetched in full. Inserting into an
       // idle one would mark it loaded with a single message in it.
-      if (entry && entry.state === 'ready') {
-        const sender = await repo.fetchProfile(row.sender_id as string);
+      if (entry?.state === 'ready') {
+        const senderId = row.sender_id as string;
+        // Usually already in hand: senders are participants of the thread.
+        const sender =
+          conversations.find((c) => c.id === conversationId)?.participants.find((p) => p.id === senderId) ??
+          (await repo.fetchProfile(senderId));
         if (sender) {
           const incoming = repo.messageFromRealtimeRow(row, sender, myId);
           const known = entry.messages.find((m) => m.id === incoming.id);
           // Our own send already upserted the real row; keep its local state.
           upsertMessage(known ? { ...incoming, unlockedAt: known.unlockedAt, foundBy: known.foundBy } : incoming);
         }
+      } else if (entry?.state === 'loading') {
+        // The fetch in flight may have been sent before this row existed.
+        void loadMessages(conversationId);
       }
       // Previews, unread state and pendingFenced (and so the geofences).
       void loadInbox();
     },
-    [myId, upsertMessage, loadInbox, loadMessages],
+    [myId, conversations, upsertMessage, loadInbox, loadMessages],
   );
 
   /** The cached message with this id, wherever it is. */
@@ -422,16 +496,15 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       });
 
       if (error || !message) {
-        // Keep the row so the text is not lost, but mark it so the bubble can
-        // show it did not land.
+        // Take the bubble back out rather than leave one that looks sent. The
+        // text is still in the input bar, which only clears on success.
         setEntries((prev) => {
+          const existing = prev.get(conversationId);
+          if (!existing) return prev;
           const next = new Map(prev);
-          const existing = next.get(conversationId) ?? EMPTY_ENTRY;
           next.set(conversationId, {
             ...existing,
-            messages: existing.messages.map((m) =>
-              m.id === id ? { ...m, status: 'failed' as const } : m,
-            ),
+            messages: existing.messages.filter((m) => m.id !== id),
           });
           return next;
         });
@@ -464,7 +537,11 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       setConversations((prev) =>
         prev.map((c) => (c.id === conversationId ? { ...c, unread: false } : c)),
       );
-      await repo.markConversationRead(conversationId, myId);
+      // Unread compares last_read_at with the server's sent_at, so a phone
+      // whose clock runs behind would leave the thread unread after every
+      // refresh. Never mark read earlier than the newest message.
+      const readAt = Math.max(Date.now(), conversation.lastMessage?.sentAt ?? 0);
+      await repo.markConversationRead(conversationId, myId, readAt);
     },
     [myId, conversations],
   );
@@ -474,19 +551,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       if (!myId) return;
 
       const at = Date.now();
-      setEntries((prev) => {
-        const next = new Map(prev);
-        for (const [cid, entry] of next) {
-          if (!entry.messages.some((m) => m.id === messageId)) continue;
-          next.set(cid, {
-            ...entry,
-            messages: entry.messages.map((m) =>
-              m.id === messageId && m.unlockedAt == null ? { ...m, unlockedAt: at } : m,
-            ),
-          });
-        }
-        return next;
-      });
+      patchMessage(messageId, (m) => (m.unlockedAt == null ? { ...m, unlockedAt: at } : m));
       // Drop it from the monitored set immediately; this also rewrites the
       // mirror, so the background task stops alerting for a place already
       // visited even before the next refresh.
@@ -497,16 +562,15 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
 
       const unlocked = findCached(messageId) ?? pendingFenced.find((m) => m.id === messageId);
       const { error } = await repo.unlockMessage(messageId, myId);
-      if (error) {
-        void loadInbox();
-      } else if (unlocked?.trail) {
-        // In pin mode the next stop is now visible: fetch it, its pin, and
-        // (through pendingFenced) its geofence.
-        void loadMessages(unlocked.conversationId);
+      // A refusal (say, the stop closed a moment ago) must undo the optimistic
+      // unlock in the thread too, not only in pendingFenced. After a trail
+      // unlock in pin mode, the next stop, its pin and its geofence appear.
+      if (error || unlocked?.trail) {
+        if (unlocked) void loadMessages(unlocked.conversationId);
         void loadInbox();
       }
     },
-    [myId, pendingFenced, applyPendingFenced, loadInbox, loadMessages, findCached],
+    [myId, pendingFenced, patchMessage, applyPendingFenced, loadInbox, loadMessages, findCached],
   );
 
   const createTrail = useCallback(

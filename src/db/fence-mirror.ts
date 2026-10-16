@@ -43,18 +43,32 @@ const toMirrored = (row: Row): MirroredMessage => ({
 });
 
 /**
+ * withTransactionAsync is not exclusive: a second one started while the first
+ * is open fails or interleaves with it, and two inbox refreshes landing
+ * together do exactly that. Chaining the writes runs each alone, in the order
+ * they were made, so the newest set is always the one left behind.
+ */
+let writes: Promise<void> = Promise.resolve();
+
+function inTurn(write: () => Promise<void>): Promise<void> {
+  const run = writes.then(write);
+  writes = run.catch(() => {});
+  return run;
+}
+
+/**
  * Replaces the whole mirror in one transaction.
  *
  * A full replace rather than a diff because the set is small and correctness
  * matters more than write volume: a stale row here means a notification for a
  * message the reader has already unlocked, or one that is no longer theirs.
  */
-export async function replaceMirror(
+export function replaceMirror(
   db: SQLiteDatabase,
   ownerId: string,
   rows: MirroredMessage[],
 ): Promise<void> {
-  await db.withTransactionAsync(async () => {
+  return inTurn(() => db.withTransactionAsync(async () => {
     await db.runAsync('DELETE FROM pending_fenced');
     for (const r of rows) {
       await db.runAsync(
@@ -69,7 +83,7 @@ export async function replaceMirror(
         'ON CONFLICT(id) DO UPDATE SET owner_id = excluded.owner_id',
       [ownerId],
     );
-  });
+  }));
 }
 
 /** Read by the background task. The region identifier is the fence key. */
@@ -84,11 +98,11 @@ export async function loadMirroredForFence(
   return rows.map(toMirrored);
 }
 
-export async function clearMirror(db: SQLiteDatabase): Promise<void> {
-  await db.withTransactionAsync(async () => {
+export function clearMirror(db: SQLiteDatabase): Promise<void> {
+  return inTurn(() => db.withTransactionAsync(async () => {
     await db.runAsync('DELETE FROM pending_fenced');
     await db.runAsync('UPDATE mirror_meta SET owner_id = NULL WHERE id = 1');
-  });
+  }));
 }
 
 /**

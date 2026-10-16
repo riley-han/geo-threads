@@ -48,8 +48,11 @@ export type Message = {
    */
   opensAt: number | null;
   closesAt: number | null;
-  /** 'sending' until the insert lands, so an optimistic row is distinguishable. */
-  status: 'sent' | 'sending' | 'failed';
+  /**
+   * 'sending' until the insert lands, so an optimistic row is distinguishable.
+   * A failed send removes the row; its text is still in the input bar.
+   */
+  status: 'sent' | 'sending';
 };
 
 /** One receipt: a finder and when they unlocked, epoch ms (minute precision). */

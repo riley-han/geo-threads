@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -273,7 +274,7 @@ export default function ConversationScreen() {
                 </ThemedText>
               </View>
 
-              {latestFence ? (
+              {__DEV__ && latestFence ? (
                 <Pressable
                   onPress={() => cycleSimulation()}
                   hitSlop={8}
@@ -293,6 +294,7 @@ export default function ConversationScreen() {
           <MessageInputBar
             onSend={async (body, fence) => {
               const { error } = await sendMessage(id, body, fence);
+              if (error) Alert.alert('Message not sent', error);
               return error == null;
             }}
             onStartTrail={() =>

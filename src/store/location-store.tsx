@@ -96,7 +96,9 @@ export function LocationProvider({ children }: { children: ReactNode }) {
   return (
     <LocationContext.Provider
       value={{
-        position: simulated ?? gpsPosition,
+        // The watch stops when access is withdrawn, but its last fix would
+        // otherwise linger and keep a message unlockable from where you were.
+        position: simulated ?? (access === 'foreground' || access === 'background' ? gpsPosition : null),
         access,
         requestForeground,
         requestBackground,
