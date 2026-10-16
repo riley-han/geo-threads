@@ -98,8 +98,8 @@ export async function createConversation(
 export async function markConversationRead(
   conversationId: string,
   myId: string,
+  readAt: number,
 ): Promise<{ readAt: number; error: string | null }> {
-  const readAt = Date.now();
   const { error } = await supabase
     .from('conversation_participants')
     .update({ last_read_at: new Date(readAt).toISOString() })

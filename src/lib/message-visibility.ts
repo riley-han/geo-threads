@@ -33,7 +33,8 @@ export function messageVisibility(
   now: number = Date.now(),
 ): MessageVisibility {
   const fence = message.fence;
-  if (!fence || message.unlockedAt != null) return { kind: 'open' };
+  // You wrote it, so it was never locked to you.
+  if (!fence || message.isMine || message.unlockedAt != null) return { kind: 'open' };
 
   if (message.opensAt != null && message.opensAt > now) {
     return { kind: 'scheduled', fence, opensAt: message.opensAt };
