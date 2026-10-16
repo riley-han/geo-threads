@@ -607,6 +607,29 @@ await asUser(dave, async () => {
 });
 await db.query(`update public.profiles set share_unlock_receipts=true where id=$1`, [dave]);
 
+console.log('\n\x1b[1m── column tampering ──\x1b[0m');
+// RLS checks who owns a row, not which columns changed, so each of these is a
+// write to your own row that would otherwise rewrite who it is about.
+const erin = (await db.query(`insert into auth.users (email, raw_user_meta_data) values ('erin@example.com','{"name":"Erin"}') returning id`)).rows[0].id;
+await asUser(carol, () => denied('carol opening a friendship with erin that is already accepted',
+  () => db.query(`insert into public.friendships (requester_id,addressee_id,status) values ($1,$2,'accepted') returning id`,[carol,erin])));
+await asUser(dave, () => db.query(`insert into public.friendships (requester_id,addressee_id) values ($1,$2)`,[dave,carol]));
+await asUser(carol, () => denied("carol (addressee) rewriting dave's request to come from bob",
+  () => db.query(`update public.friendships set requester_id=$1, status='accepted' where requester_id=$2 and addressee_id=$3 returning id`,[bob,dave,carol])));
+await asUser(carol, () => allowed('carol accepts the request dave actually sent',
+  () => db.query(`update public.friendships set status='accepted' where requester_id=$1 and addressee_id=$2 returning id`,[dave,carol])));
+let aliceDave;
+await asUser(alice, async () => {
+  aliceDave = (await db.query(`select public.create_conversation(array[$1]::uuid[]) as id`,[dave])).rows[0].id;
+});
+await asUser(bob, () => denied("bob moving his participant row into alice and dave's thread",
+  () => db.query(`update public.conversation_participants set conversation_id=$1 where conversation_id=$2 and user_id=$3 returning user_id`,[aliceDave,convo,bob])));
+await asUser(bob, () => allowed('bob marks his thread read',
+  () => db.query(`update public.conversation_participants set last_read_at=now() where conversation_id=$1 and user_id=$2 returning user_id`,[convo,bob])));
+await asUser(bob, () => denied("bob appending a stop to alice's trail",
+  () => db.query(`insert into public.messages (conversation_id,sender_id,body,fence_latitude,fence_longitude,fence_radius_meters,trail_id,trail_step)
+    values ($1,$2,'fake stop',37.32,-122.4,100,$3,3) returning id`,[group,bob,raceTrail])));
+
 console.log('\n\x1b[1m── constraints ──\x1b[0m');
 await asUser(alice, async () => {
   await denied('half-populated geofence (lat, no radius)',
